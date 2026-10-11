@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Sign in · Live Stream App</title>
+  <script src="/media/site-header.js" defer></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "DM Sans", "Trebuchet MS", sans-serif;
+      color: #202124;
+      background: #f7f8f8;
+      font-synthesis: none;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { min-width: 320px; min-height: 100vh; margin: 0; }
+    button, input { font: inherit; }
+    main { display: grid; min-height: calc(100vh - 64px); place-items: center; padding: 36px 20px; }
+    .login-card { width: min(100%, 420px); padding: 34px; background: #fff; border: 1px solid #e1e4e6; border-radius: 8px; }
+    .login-card h2 { margin: 0 0 8px; font-size: 25px; }
+    .intro { margin: 0 0 26px; color: #687078; font-size: 14px; line-height: 1.5; }
+    .field { margin-bottom: 18px; }
+    label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 600; }
+    input { display: block; width: 100%; min-height: 44px; padding: 10px 12px; color: #202124; background: #fff; border: 1px solid #cbd0d4; border-radius: 5px; outline: none; }
+    input:focus { border-color: #2876d2; box-shadow: 0 0 0 2px #2876d222; }
+    #submit-button { width: 100%; min-height: 44px; padding: 10px 16px; color: #fff; background: #1769c2; border: 0; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    #submit-button:hover:not(:disabled) { background: #0e58a7; }
+    #submit-button:disabled { opacity: .65; cursor: wait; }
+    #form-status { min-height: 20px; margin: 14px 0 0; color: #687078; font-size: 13px; line-height: 1.5; }
+    #form-status[data-state="error"] { color: #9c3027; }
+    #form-status[data-state="success"] { color: #216e39; }
+    .login-links { display: flex; justify-content: flex-end; margin: 8px 0 0; font-size: 13px; }
+    .login-links a { color: #1769c2; font-weight: 600; text-decoration: none; }
+    .login-links a:hover { text-decoration: underline; }
+    .register-link { margin: 20px 0 0; color: #687078; font-size: 13px; text-align: center; }
+    .register-link a { color: #1769c2; font-weight: 600; text-decoration: none; }
+    .register-link a:hover { text-decoration: underline; }
+    @media (max-width: 520px) {
+      main { min-height: calc(100vh - 56px); padding: 22px 14px; }
+      .login-card { padding: 26px 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main>
+    <section class="login-card" aria-labelledby="login-heading">
+      <h2 id="login-heading">Welcome back</h2>
+      <p class="intro">Sign in to continue to live events and conversations.</p>
+      <form id="login-form">
+        <div class="field">
+          <label for="mail-id">Email address</label>
+          <input id="mail-id" name="mail_id" type="email" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="login-links">
+          <a href="/forgot_password">Forgot password?</a>
+        </div>
+        <button id="submit-button" type="submit">Sign in</button>
+        <p id="form-status" role="status" aria-live="polite"></p>
+      </form>
+      <p class="register-link">New to Live Stream App? <a href="/register">Create an account</a></p>
+    </section>
+  </main>
+  <script>
+    const loginForm = document.querySelector("#login-form");
+    const submitButton = document.querySelector("#submit-button");
+    const formStatus = document.querySelector("#form-status");
+
+    function showStatus(message, state) {
+      formStatus.textContent = message;
+      formStatus.dataset.state = state;
+    }
+
+    loginForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      submitButton.disabled = true;
+      showStatus("Signing in...", "loading");
+
+      const formData = new FormData(loginForm);
+      try {
+        const response = await fetch("/api/v1/user_service/user/session/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mail_id: formData.get("mail_id"),
+            password: formData.get("password")
+          })
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(typeof result.detail === "string" ? result.detail : "Unable to sign in with those credentials.");
+        }
+
+        sessionStorage.setItem("access_token", result.access_token);
+        sessionStorage.setItem("refresh_token", result.refresh_token);
+        sessionStorage.setItem("token_type", result.token_type);
+        sessionStorage.setItem("user_name", result.user_name);
+        sessionStorage.setItem("mail_id", result.mail_id);
+        showStatus("Signed in successfully. Opening live events...", "success");
+        window.location.assign("/events");
+      } catch (error) {
+        showStatus(error.message || "Could not connect to the User Service. Try again.", "error");
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

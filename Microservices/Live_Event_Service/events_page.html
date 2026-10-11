@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live events</title>
+  <script src="/media/site-header.js" defer></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "DM Sans", "Trebuchet MS", sans-serif;
+      color: #202124;
+      background: #f7f8f8;
+      font-synthesis: none;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; }
+    main { width: min(1240px, calc(100% - 48px)); margin: 0 auto; padding: 38px 0 56px; }
+    .page-heading { display: flex; justify-content: space-between; align-items: end; gap: 20px; margin-bottom: 22px; }
+    .page-heading h2 { margin: 0 0 5px; font-size: 26px; }
+    .page-heading p { margin: 0; color: #687078; font-size: 14px; }
+    #page-status { color: #687078; font-size: 13px; }
+    .event-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; }
+    .event-card { display: block; overflow: hidden; color: inherit; background: #fff; border: 1px solid #e1e4e6; border-radius: 7px; text-decoration: none; transition: border-color .15s, transform .15s; }
+    .event-card:hover { border-color: #8c969d; transform: translateY(-2px); }
+    .event-image { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #17191b; }
+    .image-placeholder { display: grid; width: 100%; aspect-ratio: 16 / 9; place-items: center; color: #c6cbd0; background: #17191b; font-size: 13px; }
+    .event-info { padding: 13px 14px 15px; }
+    .event-name { margin: 0 0 8px; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+    .event-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 0; color: #687078; font-size: 12px; }
+    .event-meta span + span::before { content: "· "; }
+    #empty-state { margin: 0; padding: 34px 18px; color: #687078; background: #fff; border: 1px dashed #cbd0d4; border-radius: 7px; text-align: center; }
+    #error-state { color: #9c3027; font-size: 13px; }
+    .pagination { display: flex; justify-content: center; align-items: center; gap: 14px; margin-top: 26px; }
+    .pagination button { min-width: 88px; padding: 9px 13px; border: 1px solid #cbd0d4; border-radius: 4px; background: #fff; cursor: pointer; }
+    .pagination button:hover:not(:disabled) { background: #eef1f3; }
+    .pagination button:disabled { opacity: .5; cursor: default; }
+    #page-number { color: #687078; font-size: 13px; }
+    @media (max-width: 560px) {
+      main { width: calc(100% - 28px); padding-top: 25px; }
+      .page-heading { align-items: start; flex-direction: column; }
+      .page-heading h2 { font-size: 23px; }
+      .event-grid { grid-template-columns: 1fr; gap: 14px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main>
+    <div class="page-heading">
+      <div>
+        <h2>Live events</h2>
+        <p>Select an event to join its live conversation.</p>
+      </div>
+      <span id="page-status" role="status" aria-live="polite"></span>
+    </div>
+    <div id="error-state" role="alert" hidden></div>
+    <section id="event-list" class="event-grid" aria-label="Events"></section>
+    <p id="empty-state" hidden>No events found.</p>
+    <nav class="pagination" aria-label="Event pages">
+      <button id="previous-page" type="button" disabled>Previous</button>
+      <span id="page-number">Page 1</span>
+      <button id="next-page" type="button" disabled>Next</button>
+    </nav>
+  </main>
+
+  <script>
+    const pageSize = 5;
+    let currentPage = 1;
+
+    const eventList = document.querySelector("#event-list");
+    const pageStatus = document.querySelector("#page-status");
+    const emptyState = document.querySelector("#empty-state");
+    const errorState = document.querySelector("#error-state");
+    const previousButton = document.querySelector("#previous-page");
+    const nextButton = document.querySelector("#next-page");
+    const pageNumber = document.querySelector("#page-number");
+    const originalFetch = window.fetch.bind(window);
+    let refreshPromise;
+
+    async function refreshAccessToken() {
+      if (!refreshPromise) {
+        refreshPromise = (async () => {
+          const refreshToken = sessionStorage.getItem("refresh_token");
+          if (!refreshToken) return null;
+
+          let response;
+          try {
+            response = await originalFetch("/api/v1/user_service/refresh", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: refreshToken })
+            });
+          } catch {
+            return null;
+          }
+
+          if (!response.ok) return null;
+
+          let tokens;
+          try {
+            tokens = await response.json();
+          } catch {
+            return null;
+          }
+          if (typeof tokens.access_token !== "string" || !tokens.access_token) return null;
+
+          sessionStorage.setItem("access_token", tokens.access_token);
+          sessionStorage.setItem("token_type", tokens.token_type || "bearer");
+          return tokens.access_token;
+        })().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      return refreshPromise;
+    }
+
+    const fetch = async (input, options = {}) => {
+      const pathname = new URL(typeof input === "string" ? input : input.url, window.location.href).pathname;
+      if (!pathname.startsWith("/api/v1/") || pathname === "/api/v1/user_service/refresh") {
+        return originalFetch(input, options);
+      }
+
+      const headers = new Headers(input instanceof Request ? input.headers : undefined);
+      new Headers(options.headers).forEach((value, key) => headers.set(key, value));
+      const accessToken = sessionStorage.getItem("access_token");
+      headers.set("Authorization", `Bearer ${accessToken || ""}`);
+
+      let response = await originalFetch(input, { ...options, headers });
+      if (response.status !== 401) return response;
+
+      const latestAccessToken = sessionStorage.getItem("access_token");
+      const refreshedToken = latestAccessToken !== accessToken
+        ? latestAccessToken
+        : await refreshAccessToken();
+      if (!refreshedToken) return response;
+
+      headers.set("Authorization", `Bearer ${refreshedToken}`);
+      return originalFetch(input, { ...options, headers });
+    };
+
+    function redirectToLogin() {
+      sessionStorage.removeItem("access_token");
+      sessionStorage.removeItem("refresh_token");
+      sessionStorage.removeItem("token_type");
+      window.location.replace("/login");
+    }
+
+    function formatStartTime(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "";
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short"
+      }).format(date);
+    }
+
+    function resolveThumbnailUrl(value) {
+      if (/^(?:https?:)?\/\//i.test(value)) return value;
+      return `/media/${value.replace(/^\/+/, "")}`;
+    }
+
+    function makeEventCard(event) {
+      const link = document.createElement("a");
+      link.className = "event-card";
+      link.href = `/events/${encodeURIComponent(event._id)}`;
+      link.setAttribute("aria-label", `Open ${event.name || "live event"}`);
+
+      if (event.thumbnail_link) {
+        const image = document.createElement("img");
+        image.className = "event-image";
+        image.src = resolveThumbnailUrl(event.thumbnail_link);
+        image.alt = "";
+        image.loading = "lazy";
+        image.addEventListener("error", () => {
+          const placeholder = document.createElement("div");
+          placeholder.className = "image-placeholder";
+          placeholder.textContent = "Thumbnail unavailable";
+          image.replaceWith(placeholder);
+        }, { once: true });
+        link.append(image);
+      } else {
+        const placeholder = document.createElement("div");
+        placeholder.className = "image-placeholder";
+        placeholder.textContent = "No thumbnail";
+        link.append(placeholder);
+      }
+
+      const info = document.createElement("div");
+      info.className = "event-info";
+      const name = document.createElement("h3");
+      name.className = "event-name";
+      name.textContent = event.name || "Untitled event";
+      const metadata = document.createElement("p");
+      metadata.className = "event-meta";
+      const values = [event.category, event.views == null ? "" : `${event.views} watching`, formatStartTime(event.start_time)].filter(Boolean);
+      for (const value of values) {
+        const item = document.createElement("span");
+        item.textContent = value;
+        metadata.append(item);
+      }
+      info.append(name, metadata);
+      link.append(info);
+      return link;
+    }
+
+    async function loadEvents(page) {
+      currentPage = page;
+      pageStatus.textContent = "Loading events...";
+      errorState.hidden = true;
+      eventList.replaceChildren();
+      emptyState.hidden = true;
+      previousButton.disabled = true;
+      nextButton.disabled = true;
+
+      try {
+        const response = await fetch(`/api/v1/live_event_service/live_events/?page=${currentPage}`, {
+          headers: { Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}` }
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!response.ok) throw new Error("Could not load events.");
+        const events = await response.json();
+        for (const event of events) eventList.append(makeEventCard(event));
+        emptyState.hidden = events.length > 0;
+        pageStatus.textContent = `${events.length} event${events.length === 1 ? "" : "s"}`;
+        previousButton.disabled = currentPage === 1;
+        nextButton.disabled = events.length < pageSize;
+      } catch (error) {
+        pageStatus.textContent = "";
+        errorState.textContent = error.message || "Could not load events.";
+        errorState.hidden = false;
+      }
+      pageNumber.textContent = `Page ${currentPage}`;
+    }
+
+    previousButton.addEventListener("click", () => loadEvents(currentPage - 1));
+    nextButton.addEventListener("click", () => loadEvents(currentPage + 1));
+    loadEvents(currentPage);
+  </script>
+</body>
+</html>

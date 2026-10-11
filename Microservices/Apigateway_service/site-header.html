@@ -1,0 +1,144 @@
+<style>
+  .site-header {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 0 5vw;
+    background: #fff;
+    border-bottom: 1px solid #e2e5e7;
+  }
+
+  .site-header h1 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .site-profile {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .site-profile-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px 10px;
+    color: #263238;
+    background: transparent;
+    border: 0;
+    border-radius: 5px;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .site-profile-trigger:hover,
+  .site-profile-trigger:focus-visible {
+    background: #f3f6f8;
+  }
+
+  .site-profile-icon {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+  }
+
+  .site-profile-name {
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .site-profile-email {
+    position: absolute;
+    z-index: 2;
+    top: calc(100% + 6px);
+    right: 0;
+    visibility: hidden;
+    padding: 7px 10px;
+    color: #fff;
+    background: #263238;
+    border-radius: 4px;
+    font-size: 12px;
+    opacity: 0;
+    pointer-events: none;
+    white-space: nowrap;
+    transition: opacity .15s ease;
+  }
+
+  .site-profile-trigger:hover .site-profile-email,
+  .site-profile-trigger:focus-visible .site-profile-email {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .site-account-menu {
+    position: absolute;
+    z-index: 3;
+    top: calc(100% + 4px);
+    right: 0;
+    padding: 5px;
+    background: #fff;
+    border: 1px solid #e2e5e7;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+  }
+
+  .site-logout-button {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    color: #1769c2;
+    background: #fff;
+    border: 0;
+    border-radius: 5px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .site-logout-button:hover:not(:disabled) {
+    background: #f3f6f8;
+  }
+
+  .site-logout-button:disabled {
+    cursor: wait;
+    opacity: .65;
+  }
+
+  @media (max-width: 520px) {
+    .site-header {
+      height: 56px;
+      padding: 0 12px;
+    }
+
+    .site-profile-email {
+      max-width: calc(100vw - 40px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+</style>
+<header class="site-header">
+  <h1>Live Stream App</h1>
+  <div id="site-profile" class="site-profile" hidden>
+    <button id="site-profile-trigger" class="site-profile-trigger" type="button"
+      aria-expanded="false" aria-controls="site-account-menu" aria-describedby="site-profile-email">
+      <svg class="site-profile-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.2 0-7.5 2.1-7.5 4.75V21h15v-2.25C19.5 16.1 16.2 14 12 14Z"></path>
+      </svg>
+      <span id="site-profile-name" class="site-profile-name"></span>
+      <span id="site-profile-email" class="site-profile-email" role="tooltip"></span>
+    </button>
+    <div id="site-account-menu" class="site-account-menu" hidden>
+      <button id="site-logout-button" class="site-logout-button" type="button">Log out</button>
+    </div>
+  </div>
+</header>

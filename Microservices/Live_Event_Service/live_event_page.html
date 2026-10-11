@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live event</title>
+  <script src="/media/site-header.js" defer></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "DM Sans", "Trebuchet MS", sans-serif;
+      color: #202124;
+      background: #f7f8f8;
+      font-synthesis: none;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; }
+    button, textarea { font: inherit; }
+    .watch-page { width: min(1440px, calc(100% - 48px)); margin: 0 auto; padding: 30px 0 48px; }
+    .watch-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); gap: 28px; align-items: start; }
+    .event-column { min-width: 0; }
+    .player-frame { display: grid; min-height: 260px; aspect-ratio: 16 / 9; place-items: center; overflow: hidden; background: #101214; border-radius: 8px; }
+    #event-thumbnail { display: block; width: 100%; height: 100%; object-fit: cover; }
+    #thumbnail-error { margin: 0; color: #d8dcdf; font-size: 14px; }
+    #event-title { margin: 20px 0 8px; font-size: 24px; line-height: 1.3; overflow-wrap: anywhere; }
+    #event-details { margin: 0; color: #60666b; font-size: 14px; }
+    .chat-panel { display: flex; height: min(720px, calc(100vh - 118px)); min-height: 520px; flex-direction: column; overflow: hidden; background: #fff; border: 1px solid #e0e3e5; border-radius: 8px; }
+    .chat-header { padding: 16px 18px 12px; border-bottom: 1px solid #e8eaec; }
+    .chat-header h2 { margin: 0 0 5px; font-size: 17px; }
+    #socket-status { margin: 0; color: #687078; font-size: 12px; }
+    #comment-list { min-height: 0; flex: 1; overflow-y: auto; padding: 4px 16px; overscroll-behavior: contain; }
+    #comment-list p { margin: 0; padding: 12px 2px; border-bottom: 1px solid #f0f1f2; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+    #comment-list strong { font-size: 12px; }
+    #comment-list time { color: #7a8288; font-size: 11px; }
+    #empty-state { margin: 0; padding: 18px; color: #737b81; font-size: 13px; text-align: center; }
+    #comment-form { padding: 12px 14px 14px; background: #fff; border-top: 1px solid #e8eaec; }
+    #form-note { min-height: 16px; margin: 0 0 7px; color: #687078; font-size: 11px; }
+    #comment-form label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; }
+    #comment { display: block; width: 100%; min-height: 74px; padding: 10px; resize: vertical; border: 1px solid #cbd0d4; border-radius: 5px; outline: none; }
+    #comment:focus { border-color: #2876d2; box-shadow: 0 0 0 2px #2876d222; }
+    #send-button { display: block; min-width: 84px; margin: 9px 0 0 auto; padding: 9px 16px; color: #fff; background: #1769c2; border: 0; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    #send-button:hover { background: #0e58a7; }
+    #send-button:disabled { opacity: .65; cursor: wait; }
+    @media (max-width: 850px) {
+      .watch-page { width: min(100% - 32px, 720px); padding-top: 22px; }
+      .watch-layout { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+      .chat-panel { height: 560px; min-height: 420px; }
+    }
+    @media (max-width: 520px) {
+      .watch-page { width: calc(100% - 24px); padding-top: 14px; }
+      .player-frame { min-height: 190px; border-radius: 5px; }
+      #event-title { margin-top: 14px; font-size: 20px; }
+      .chat-panel { height: 65vh; min-height: 380px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main class="watch-page">
+    <div class="watch-layout">
+      <section class="event-column" aria-label="Live event">
+        <div class="player-frame">
+          <img id="event-thumbnail" src="" alt="Live event thumbnail" width="800" height="450" hidden>
+          <p id="thumbnail-error" hidden>Event thumbnail could not be loaded.</p>
+        </div>
+          <h1 id="event-title">Loading live event...</h1>
+          <p id="event-details"></p>
+      </section>
+      <aside class="chat-panel" aria-label="Live chat">
+        <div class="chat-header">
+            <h2>Live chat</h2>
+            <p id="socket-status" role="status" aria-live="polite">Connecting to live chat...</p>
+        </div>
+        <div id="comment-list" role="feed" aria-live="polite"></div>
+        <p id="empty-state">No comments yet.</p>
+        <form id="comment-form">
+          <p id="form-note" aria-live="polite"></p>
+          <label for="comment">Comment</label>
+          <textarea id="comment" name="comment_content" rows="3" maxlength="2000" required></textarea>
+          <button id="send-button" type="submit">Send</button>
+        </form>
+      </aside>
+    </div>
+  </main>
+
+  <script>
+    const eventId = decodeURIComponent(window.location.pathname.split("/")[2] || "");
+    const comments = [];
+    let reconnectDelay = 1000;
+    let reconnectTimer;
+
+    const commentList = document.querySelector("#comment-list");
+    const emptyState = document.querySelector("#empty-state");
+    const socketStatus = document.querySelector("#socket-status");
+    const formNote = document.querySelector("#form-note");
+    const sendButton = document.querySelector("#send-button");
+    const eventTitle = document.querySelector("#event-title");
+    const eventDetails = document.querySelector("#event-details");
+    const eventThumbnail = document.querySelector("#event-thumbnail");
+    const thumbnailError = document.querySelector("#thumbnail-error");
+    let redirectingToLogin = false;
+    const originalFetch = window.fetch.bind(window);
+    let refreshPromise;
+
+    async function refreshAccessToken() {
+      if (!refreshPromise) {
+        refreshPromise = (async () => {
+          const refreshToken = sessionStorage.getItem("refresh_token");
+          if (!refreshToken) return null;
+
+          let response;
+          try {
+            response = await originalFetch("/api/v1/user_service/refresh", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refresh_token: refreshToken })
+            });
+          } catch {
+            return null;
+          }
+
+          if (!response.ok) return null;
+
+          let tokens;
+          try {
+            tokens = await response.json();
+          } catch {
+            return null;
+          }
+          if (typeof tokens.access_token !== "string" || !tokens.access_token) return null;
+
+          sessionStorage.setItem("access_token", tokens.access_token);
+          sessionStorage.setItem("token_type", tokens.token_type || "bearer");
+          return tokens.access_token;
+        })().finally(() => {
+          refreshPromise = null;
+        });
+      }
+      return refreshPromise;
+    }
+
+    const fetch = async (input, options = {}) => {
+      const pathname = new URL(typeof input === "string" ? input : input.url, window.location.href).pathname;
+      if (!pathname.startsWith("/api/v1/") || pathname === "/api/v1/user_service/refresh") {
+        return originalFetch(input, options);
+      }
+
+      const headers = new Headers(input instanceof Request ? input.headers : undefined);
+      new Headers(options.headers).forEach((value, key) => headers.set(key, value));
+      const accessToken = sessionStorage.getItem("access_token");
+      headers.set("Authorization", `Bearer ${accessToken || ""}`);
+
+      let response = await originalFetch(input, { ...options, headers });
+      if (response.status !== 401) return response;
+
+      const latestAccessToken = sessionStorage.getItem("access_token");
+      const refreshedToken = latestAccessToken !== accessToken
+        ? latestAccessToken
+        : await refreshAccessToken();
+      if (!refreshedToken) return response;
+
+      headers.set("Authorization", `Bearer ${refreshedToken}`);
+      return originalFetch(input, { ...options, headers });
+    };
+
+    function redirectToLogin() {
+      if (redirectingToLogin) return;
+      redirectingToLogin = true;
+      sessionStorage.removeItem("access_token");
+      sessionStorage.removeItem("refresh_token");
+      sessionStorage.removeItem("token_type");
+      window.location.replace("/login");
+    }
+
+    function setSocketState(label) {
+      socketStatus.textContent = label;
+    }
+
+    function formatTime(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "Just now";
+      return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+    }
+
+    function resolveThumbnailUrl(value) {
+      if (/^(?:https?:)?\/\//i.test(value)) return value;
+      return `/media/${value.replace(/^\/+/, "")}`;
+    }
+
+    function commentKey(comment) {
+      return comment._id || `${Date.parse(comment.timestamp)}-${comment.comment_content}`;
+    }
+
+    function makeCommentRow(comment) {
+      const row = document.createElement("p");
+      const author = document.createElement("strong");
+      author.textContent = "Viewer";
+      const time = document.createElement("time");
+      time.dateTime = comment.timestamp || "";
+      time.textContent = ` · ${formatTime(comment.timestamp)}`;
+      const text = document.createElement("span");
+      text.textContent = `: ${comment.comment_content || ""}`;
+      row.append(author, time, text);
+      return row;
+    }
+
+    function renderComments() {
+      commentList.replaceChildren();
+      for (const comment of comments) commentList.append(makeCommentRow(comment));
+      emptyState.hidden = comments.length > 0;
+      commentList.scrollTop = commentList.scrollHeight;
+    }
+
+    function addComment(comment) {
+      const key = commentKey(comment);
+      if (comments.some((existing) => commentKey(existing) === key)) return;
+      comments.push(comment);
+      comments.sort((first, second) => Date.parse(first.timestamp) - Date.parse(second.timestamp));
+      renderComments();
+    }
+
+    async function loadEvent() {
+      try {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/`, {
+          headers: { Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}` }
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!response.ok) throw new Error("Event details unavailable");
+        const event = await response.json();
+        eventTitle.textContent = event.name || "Live event";
+        const details = [event.category, event.views == null ? "" : `${event.views} watching`].filter(Boolean);
+        eventDetails.textContent = details.join(" · ");
+        if (event.thumbnail_link) {
+          eventThumbnail.addEventListener("error", () => {
+            eventThumbnail.hidden = true;
+            thumbnailError.hidden = false;
+          }, { once: true });
+          eventThumbnail.src = resolveThumbnailUrl(event.thumbnail_link);
+          eventThumbnail.hidden = false;
+        } else {
+          thumbnailError.hidden = false;
+        }
+      } catch {
+        eventTitle.textContent = "Live event";
+        thumbnailError.hidden = false;
+      }
+    }
+
+    async function loadComments() {
+      try {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?page=1`, {
+          headers: { Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}` }
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!response.ok) throw new Error("Could not load comments");
+        const history = await response.json();
+        for (const comment of history.reverse()) addComment(comment);
+      } catch {
+        emptyState.textContent = "Comment history could not be loaded.";
+      }
+      renderComments();
+    }
+
+    function connectSocket() {
+      if (!eventId) {
+        setSocketState("Event ID missing");
+        return;
+      }
+      const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${scheme}//${window.location.host}/api/v1/live_event_service/ws/live_events/${encodeURIComponent(eventId)}`);
+      setSocketState("Connecting to live chat...");
+      socket.addEventListener("open", () => {
+        reconnectDelay = 1000;
+        setSocketState("Live chat connected");
+      });
+      socket.addEventListener("message", (message) => {
+        try { addComment(JSON.parse(message.data)); } catch { /* Ignore malformed updates. */ }
+      });
+      socket.addEventListener("error", () => setSocketState("Live chat connection issue"));
+      socket.addEventListener("close", () => {
+        setSocketState("Reconnecting to live chat...");
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = window.setTimeout(connectSocket, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, 12000);
+      });
+    }
+
+    const commentForm = document.querySelector("#comment-form");
+    const commentInput = document.querySelector("#comment");
+
+    commentInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      commentForm.requestSubmit();
+    });
+
+    commentForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      sendButton.disabled = true;
+      const form = event.currentTarget;
+      const formData = new FormData(form);
+      const comment = {
+        email_id: "string@gmail.com",
+        comment_content: formData.get("comment_content"),
+        timestamp: new Date().toISOString()
+      };
+      try {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comment`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}`
+          },
+          body: JSON.stringify(comment)
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!response.ok) {
+          const detail = await response.json().catch(() => ({}));
+          throw new Error(detail.detail || "Comment could not be sent");
+        }
+        form.reset();
+      } catch (error) {
+        formNote.textContent = error.message || "Could not send comment. Try again.";
+      } finally {
+        sendButton.disabled = false;
+      }
+    });
+
+    loadEvent().then(() => {
+      if (redirectingToLogin) return;
+      loadComments();
+      connectSocket();
+    });
+  </script>
+</body>
+</html>
