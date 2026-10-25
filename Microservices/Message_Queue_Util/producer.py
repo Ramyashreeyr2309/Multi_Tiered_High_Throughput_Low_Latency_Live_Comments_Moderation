@@ -6,7 +6,7 @@ def send_message(message_content, queue_name):
     # Connect to RabbitMQ container
     credentials = pika.PlainCredentials('admin', 'secretpass')
     parameters = pika.ConnectionParameters(
-        host='localhost', 
+        host='host.docker.internal', 
         port=5672, 
         credentials=credentials
     )

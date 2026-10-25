@@ -196,7 +196,7 @@
     function makeCommentRow(comment) {
       const row = document.createElement("p");
       const author = document.createElement("strong");
-      author.textContent = "Viewer";
+      author.textContent = comment.user_name || "Viewer";
       const time = document.createElement("time");
       time.dateTime = comment.timestamp || "";
       time.textContent = ` · ${formatTime(comment.timestamp)}`;
@@ -308,7 +308,6 @@
       const form = event.currentTarget;
       const formData = new FormData(form);
       const comment = {
-        email_id: "string@gmail.com",
         comment_content: formData.get("comment_content"),
         timestamp: new Date().toISOString()
       };

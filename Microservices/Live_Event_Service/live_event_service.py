@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path as LocalPath
 
-from fastapi import FastAPI, status, Path, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, status, Path, Header, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,7 +17,7 @@ from bson.objectid import ObjectId
 
 
 # 1. Connect to MongoDB container
-client = MongoClient("mongodb://localhost:27017/")
+client = MongoClient("mongodb://host.docker.internal:27017/")
 
 # 2. Select Database and Collection (automatically created if they don't exist)
 db = client["maindb"]
@@ -67,7 +67,15 @@ def process_classified_comment(ch, method, properties, body):
     else:
         print(comment['comment_content'])
         comment['Is_Toxic']=False
-    result = comments_collection.insert_one(comment)
+    comment_object = {
+        'user_id': ObjectId(comment['user_id']), # Convert user_id to ObjectId before inserting into MongoDB
+        'event_id': comment['event_id'],
+        'timestamp': comment['timestamp'],
+        'comment_content': comment['comment_content'],  
+        'Is_Toxic': comment['Is_Toxic'],
+        'prob': comment['prob']
+    }
+    result = comments_collection.insert_one(comment_object)
     print(f"Inserted document ID: {result.inserted_id}")
 
     event_id = comment.get("event_id")
@@ -113,9 +121,16 @@ def events_page():
     return FileResponse(page_path, media_type="text/html")
 
 @app.post("/live_events/{event_id}/comment",status_code=status.HTTP_201_CREATED)
-def post_comment(comment: CommentCreate, event_id: str=Path(...)): 
+def post_comment(
+    comment: CommentCreate,
+    event_id: str = Path(...),
+    user_id: str = Header(..., alias="x-user-id"),
+    user_name: str = Header(..., alias="x-user-name")
+):
     comment_data = comment.model_dump(mode="json")
     comment_data["event_id"] = event_id
+    comment_data["user_id"] = user_id
+    comment_data["user_name"] = user_name
     send_message(comment_data,"Tier_1_In_Queue")
     return {"message": "Comment created",
             "data":comment,
@@ -127,7 +142,29 @@ def get_comments(page: int = 1, event_id: str=Path(...)):
         page = 1
     limit = 20
     skip = (page - 1) * limit
-    recent_comments = list(comments_collection.find({"event_id": event_id, "Is_Toxic": False}).sort("timestamp",DESCENDING).limit(limit).skip(skip))
+    recent_comments = list(comments_collection.aggregate([
+        {"$match": {"event_id": event_id, "Is_Toxic": False}},
+        {"$sort": {"timestamp": DESCENDING}},
+        {"$skip": skip},
+        {"$limit": limit},
+        {
+            "$lookup": {
+                "from": "Users",
+                "localField": "user_id",
+                "foreignField": "_id",
+                "as": "_user",
+            }
+        },
+        {
+            "$addFields": {
+                "user_name": {
+                    "$ifNull": [{"$arrayElemAt": ["$_user.user_name", 0]}, None]
+                }
+            }
+        },
+        {"$project": {"_user": 0}},
+    ]))
+
     return jsonable_encoder(recent_comments, custom_encoder={ObjectId: str})
 
 
@@ -166,7 +203,3 @@ app.mount(
     StaticFiles(directory=LocalPath(__file__).with_name("assets")),
     name="event-assets",
 )
-
-
-
-

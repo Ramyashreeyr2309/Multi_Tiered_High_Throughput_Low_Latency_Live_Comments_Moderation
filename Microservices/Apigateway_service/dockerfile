@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/Microservices
+
+COPY Apigateway_service/requirements.txt /app/Microservices/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /app/Microservices/requirements.txt
+
+COPY Token_Util /app/Microservices/Token_Util
+COPY Apigateway_service /app/Microservices/Apigateway_service
+
+WORKDIR /app/Microservices
+
+EXPOSE 8000
+
+CMD ["uvicorn", "Apigateway_service.apigateway_service:app", "--host", "0.0.0.0", "--port", "8000"]

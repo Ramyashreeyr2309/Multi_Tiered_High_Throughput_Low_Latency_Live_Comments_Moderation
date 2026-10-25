@@ -18,7 +18,7 @@ def process_comment(ch, method,  body):
 def start_consumer(queue_name, process_message):
     credentials = pika.PlainCredentials('admin', 'secretpass')
     parameters = pika.ConnectionParameters(
-        host='localhost', 
+        host='host.docker.internal', 
         port=5672, 
         credentials=credentials
     )

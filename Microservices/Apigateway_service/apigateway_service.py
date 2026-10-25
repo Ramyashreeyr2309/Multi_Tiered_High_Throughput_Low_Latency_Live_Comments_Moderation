@@ -7,23 +7,20 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPExcept
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.websockets import WebSocketState
 import redis.asyncio as redis
-from jose import JWTError, jwt
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import os
+
+from Token_Util.token_util import TokenValidationError, decode_access_token
 
 app = FastAPI(version="1.0.0")
 security = HTTPBearer(auto_error=False)
 
 # Connect to Redis container on localhost:6379
 # decode_responses=True ensures Redis returns string instead of bytes
-redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis(host="host.docker.internal", port=6379, db=0, decode_responses=True)
 
 # Shared HTTPX Async Client for Reverse Proxying (Reuses Connection Pool)
 http_client = httpx.AsyncClient(timeout=10.0)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_access_key")
-REFRESH_SECRET_KEY = os.getenv("REFRESH_SECRET_KEY", "your_super_secret_refresh_key")
-ALGORITHM = "HS256"
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -115,7 +112,7 @@ async def verify_auth_token(
         if browser_route is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found")
         return None
-
+    print("HI1")
     endpoint = (
         request.method,
         request.path_params["path"].strip("/"),
@@ -124,6 +121,7 @@ async def verify_auth_token(
     if endpoint in PUBLIC_ENDPOINTS.get(service, set()):
         return None
 
+    print("HI2")
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -131,6 +129,7 @@ async def verify_auth_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    print("HI3")
     token = credentials.credentials
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -138,24 +137,23 @@ async def verify_auth_token(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
+    print("HI4")
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        token_type: str = payload.get("type")
-
-        if user_id is None or token_type != "access":
-            raise credentials_exception
-
-        return {"user_id": user_id, "role": payload.get("role")}
-    except JWTError:
-        raise credentials_exception
+        payload = decode_access_token(token)
+        print(payload)
+        user_id: str = payload.get("user_id")
+        mail_id: str = payload.get("mail_id")
+        user_name: str = payload.get("user_name")
+        return {"user_id": user_id, "mail_id": mail_id, "role": payload.get("role"), "user_name": user_name}
+    except TokenValidationError as error:
+        raise credentials_exception from error
 
 
 
 # 4. Service Registry Routing Map
 MICROSERVICE_ROUTES = {
-    "user_service": "http://127.0.0.1:8001",
-    "live_event_service": "http://127.0.0.1:8002",      # Ingestion API / RabbitMQ Producer
+    "user_service": "http://host.docker.internal:8001",
+    "live_event_service": "http://host.docker.internal:8002",      # Ingestion API / RabbitMQ Producer
 }
 
 
@@ -176,6 +174,9 @@ async def forward_request(
     headers.pop("x-user-id", None)
     if current_user is not None:
         headers["x-user-id"] = current_user["user_id"]
+        headers["x-user-mail"] = current_user["mail_id"]
+        headers["x-user-role"] = current_user.get("role", "")
+        headers["x-user-name"] = current_user.get("user_name", "")
     headers["x-forwarded-for"] = request.client.host
 
     # Read incoming request body

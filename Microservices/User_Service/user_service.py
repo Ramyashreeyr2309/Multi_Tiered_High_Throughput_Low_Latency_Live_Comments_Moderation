@@ -1,8 +1,6 @@
-import os
 import secrets
 import smtplib
 import string
-from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path as LocalPath
@@ -14,16 +12,22 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Path, stat
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr
 from pymongo import MongoClient
 
 from Message_Queue_Util.consumer import start_consumer
 from Message_Queue_Util.producer import send_message
+from Token_Util.token_util import (
+    TokenValidationError,
+    create_access_token,
+    create_refresh_token,
+    decode_access_token,
+    decode_refresh_token,
+)
 import uvicorn
 
 # Connect to MongoDB container
-client = MongoClient("mongodb://localhost:27017/")
+client = MongoClient("mongodb://host.docker.internal:27017/")
 # Select Database and Collection (automatically created if they don't exist)
 db = client["maindb"]
 users_collection = db["Users"]
@@ -33,18 +37,11 @@ security = HTTPBearer()
 
 # Connect to Redis container on localhost:6379
 # decode_responses=True ensures Redis returns string instead of bytes
-redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis(host="host.docker.internal", port=6379, db=0, decode_responses=True)
 
 OTP_EXPIRATION_SECONDS = 300
-LOCAL_SMTP_HOST = "localhost"
+LOCAL_SMTP_HOST = "host.docker.internal"
 LOCAL_SMTP_PORT = 1025
-
-SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_access_key")
-REFRESH_SECRET_KEY = os.getenv("REFRESH_SECRET_KEY", "your_super_secret_refresh_key")
-ALGORITHM = "HS256"
-
-ACCESS_TOKEN_EXPIRE_MINUTES = 15
-REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 
 class RefreshRequest(BaseModel):
@@ -96,20 +93,6 @@ def send_local_email(email_to: str, name: str, otp: str):
         server.send_message(message)
 
 
-def create_access_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "type": "access"})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-
-def create_refresh_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
-    return jwt.encode(to_encode, REFRESH_SECRET_KEY, algorithm=ALGORITHM)
-
-
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     credentials_exception = HTTPException(
@@ -119,16 +102,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     )
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        token_type: str = payload.get("type")
-
-        if user_id is None or token_type != "access":
-            raise credentials_exception
-
-        return {"user_id": user_id, "role": payload.get("role")}
-    except JWTError:
-        raise credentials_exception
+        payload = decode_access_token(token)
+        user_id: str = payload["user_id"]
+        mail_id: str = payload["mail_id"]
+        user_name: str = payload.get("user_name")
+        return {"user_id": user_id, "mail_id": mail_id, "role": payload.get("role"), "user_name": user_name}
+    except TokenValidationError as error:
+        raise credentials_exception from error
 
 
 @app.get("/")
@@ -164,7 +144,7 @@ def login_user(user: UserLogin):
     if stored_user is None or not bcrypt.checkpw(login_bytes, stored_user.get("password")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user ID or password")
 
-    user_payload = {"sub": user.mail_id, "role": stored_user.get("role")}
+    user_payload = {"user_id": str(stored_user.get("_id")), "mail_id": user.mail_id, "role": stored_user.get("role"), "user_name": stored_user.get("user_name")}
     access_token = create_access_token(data=user_payload)
     refresh_token = create_refresh_token(data=user_payload)
 
@@ -252,16 +232,14 @@ def refresh_token_endpoint(body: RefreshRequest):
     )
 
     try:
-        payload = jwt.decode(body.refresh_token, REFRESH_SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: str = payload.get("sub")
-        token_type: str = payload.get("type")
-        if user_id is None or token_type != "refresh":
-            raise credentials_exception
-
-        new_access_token = create_access_token(data={"sub": user_id, "role": payload.get("role")})
+        payload = decode_refresh_token(body.refresh_token)
+        user_id: str = payload["user_id"]
+        mail_id: str = payload["mail_id"]
+        user_name: str = payload["user_name"]
+        new_access_token = create_access_token(data={"user_id": user_id, "mail_id": mail_id, "role": payload.get("role"), "user_name": user_name})
         return {"access_token": new_access_token, "token_type": "bearer"}
-    except JWTError:
-        raise credentials_exception
+    except TokenValidationError as error:
+        raise credentials_exception from error
 
 
 @app.get("/protected")

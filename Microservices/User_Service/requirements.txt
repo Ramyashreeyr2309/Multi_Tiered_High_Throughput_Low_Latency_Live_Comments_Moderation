@@ -1,0 +1,9 @@
+fastapi
+email-validator
+pymongo
+pika
+redis
+bcrypt
+python-jose[cryptography]
+uvicorn[standard]
+websockets>=14

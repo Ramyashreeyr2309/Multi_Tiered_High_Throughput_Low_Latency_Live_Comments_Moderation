@@ -1,0 +1,7 @@
+fastapi
+numpy
+pika
+river
+transformers<5
+onnxruntime
+uvicorn[standard]
