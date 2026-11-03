@@ -6,13 +6,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
-from datetime import datetime
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from Message_Queue_Util.producer import send_message
 from Message_Queue_Util.consumer import start_consumer
 import json
 from threading import Thread
-from pymongo import MongoClient, DESCENDING
+from pymongo import MongoClient, DESCENDING, ReturnDocument
 from bson.objectid import ObjectId
 
 
@@ -25,15 +25,28 @@ comments_collection = db["Comments"]
 live_events_collection = db["Live_events"]
 
 
+def comment_for_ui(comment: dict, user_name: str | None = None) -> dict:
+    return {
+        "_id": str(comment["_id"]),
+        "user_id": str(comment["user_id"]),
+        "user_name": user_name,
+        "timestamp": comment["timestamp"],
+        "comment_content": comment["comment_content"],
+    }
+
+
 class ConnectionManager:
     def __init__(self):
         self.connections = {}
+        self.user_connections = {}
 
-    async def connect(self, event_id: str, websocket: WebSocket):
+    async def connect(self, event_id: str, user_id: str, websocket: WebSocket):
         await websocket.accept()
         self.connections.setdefault(event_id, set()).add(websocket)
+        event_users = self.user_connections.setdefault(event_id, {})
+        event_users.setdefault(user_id, set()).add(websocket)
 
-    def disconnect(self, event_id: str, websocket: WebSocket):
+    def disconnect(self, event_id: str, user_id: str, websocket: WebSocket):
         event_connections = self.connections.get(event_id)
         if event_connections is None:
             return
@@ -41,12 +54,40 @@ class ConnectionManager:
         if not event_connections:
             self.connections.pop(event_id, None)
 
+        event_users = self.user_connections.get(event_id, {})
+        user_connections = event_users.get(user_id)
+        if user_connections is not None:
+            user_connections.discard(websocket)
+            if not user_connections:
+                event_users.pop(user_id, None)
+            if not event_users:
+                self.user_connections.pop(event_id, None)
+
     async def broadcast(self, event_id: str, comment: dict):
         for websocket in list(self.connections.get(event_id, set())):
             try:
                 await websocket.send_json(comment)
             except Exception:
-                self.disconnect(event_id, websocket)
+                user_id = next(
+                    (
+                        connected_user
+                        for connected_user, user_connections in self.user_connections.get(event_id, {}).items()
+                        if websocket in user_connections
+                    ),
+                    None,
+                )
+                if user_id is not None:
+                    self.disconnect(event_id, user_id, websocket)
+
+    async def send_to_user(self, event_id: str, user_id: str, comment: dict):
+        user_connections = list(
+            self.user_connections.get(event_id, {}).get(user_id, set())
+        )
+        for websocket in user_connections:
+            try:
+                await websocket.send_json(comment)
+            except Exception:
+                self.disconnect(event_id, user_id, websocket)
 
 
 connection_manager = ConnectionManager()
@@ -55,40 +96,111 @@ server_loop = None
 def process_classified_comment(ch, method, properties, body):
     """Handle a comment received from the Tier 1 output queue."""
     comment = json.loads(body.decode('utf-8'))
-    comment['timestamp']=datetime.fromisoformat(comment['timestamp'])
+    commentTimestamp = datetime.fromisoformat(comment['timestamp']).astimezone(timezone.utc)
     print(" [<--] Received classified comment:", comment)
     prob = comment['prob']
     if (prob>=0.6):
         print("toxic comment")
         comment['Is_Toxic']=True
-    elif (prob<0.35 and prob>=0.6):
-        comment['Is_Toxic']=False
-        # send_message(comment,"Tier_2_In_Queue")
+    elif 0.35 <= prob < 0.6:
+        comment['Is_Toxic']=None
     else:
         print(comment['comment_content'])
         comment['Is_Toxic']=False
+    processingTime = datetime.now(timezone.utc).timestamp() - commentTimestamp.timestamp()
     comment_object = {
         'user_id': ObjectId(comment['user_id']), # Convert user_id to ObjectId before inserting into MongoDB
-        'event_id': comment['event_id'],
-        'timestamp': comment['timestamp'],
+        'event_id': ObjectId(comment['event_id']),
+        'timestamp': commentTimestamp,
         'comment_content': comment['comment_content'],  
         'Is_Toxic': comment['Is_Toxic'],
-        'prob': comment['prob']
+        'resolved_by': 'tier 1',
+        'tier_1_toxic_probability': comment['prob'],
+        'tier_1_processing_time_ms': int(processingTime * 1000)
     }
     result = comments_collection.insert_one(comment_object)
     print(f"Inserted document ID: {result.inserted_id}")
+    ui_comment = comment_for_ui(
+        {**comment_object, "_id": result.inserted_id},
+        user_name=comment.get("user_name"),
+    )
+    if comment['Is_Toxic'] is None:
+        message = {
+                    'comment_id': str(result.inserted_id),
+                    'comment_content': comment['comment_content'],
+                    'event_id': comment['event_id'],
+                    'user_name': comment.get('user_name')
+                   }
+        send_message(message,"Tier_2_In_Queue")
 
     event_id = comment.get("event_id")
-    if not comment['Is_Toxic'] and event_id and server_loop and not server_loop.is_closed():
+    if comment['Is_Toxic'] is None and event_id and server_loop and not server_loop.is_closed():
+        asyncio.run_coroutine_threadsafe(
+            connection_manager.send_to_user(
+                str(event_id),
+                str(comment['user_id']),
+                jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
+            ),
+            server_loop,
+        )
+    elif comment['Is_Toxic'] is False and event_id and server_loop and not server_loop.is_closed():
         asyncio.run_coroutine_threadsafe(
             connection_manager.broadcast(
                 str(event_id),
-                jsonable_encoder(comment, custom_encoder={ObjectId: str}),
+                jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
             ),
             server_loop,
         )
         
     ch.basic_ack(delivery_tag=method.delivery_tag)
+
+def process_tier_2_classified_comment(ch, method, properties, body):
+    """Handle a comment received from the Tier 2 output queue."""
+    comments = json.loads(body.decode('utf-8'))
+    for comment in comments:
+        comment_id = comment['comment_id']
+        is_toxic = comment['Is_Toxic']
+        updated_comment = comments_collection.find_one_and_update(
+            {'_id': ObjectId(comment_id)},
+            [{'$set': {
+                'Is_Toxic': is_toxic,
+                'resolved_by': 'tier 2',
+                'tier_2_processing_time_ms': {'$subtract': ['$$NOW', '$timestamp']}
+            }}],
+            return_document=ReturnDocument.AFTER)
+
+        if updated_comment is None:
+            raise LookupError(f"Comment {comment_id} was not found for Tier 2 update")
+
+        event_id = updated_comment.get("event_id")
+        if updated_comment['Is_Toxic'] and event_id and server_loop and not server_loop.is_closed():
+            removal = {
+                "type": "remove_comment",
+                "comment_id": str(updated_comment["_id"]),
+            }
+            asyncio.run_coroutine_threadsafe(
+                connection_manager.send_to_user(
+                    str(event_id),
+                    str(updated_comment["user_id"]),
+                    removal,
+                ),
+                server_loop,
+            )
+        elif not updated_comment['Is_Toxic'] and event_id and server_loop and not server_loop.is_closed():
+            ui_comment = comment_for_ui(
+                updated_comment,
+                user_name=comment.get("user_name"),
+            )
+            asyncio.run_coroutine_threadsafe(
+                connection_manager.broadcast(
+                    str(event_id),
+                    jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
+                ),
+                server_loop,
+            )
+
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -100,6 +212,11 @@ async def lifespan(_app: FastAPI):
         args=("Tier_1_Out_Queue", process_classified_comment),
         daemon=True,
     ).start()
+    Thread(
+            target=start_consumer,
+            args=("Tier_2_Out_Queue", process_tier_2_classified_comment),
+            daemon=True,
+        ).start()
     yield
 
 
@@ -131,6 +248,7 @@ def post_comment(
     comment_data["event_id"] = event_id
     comment_data["user_id"] = user_id
     comment_data["user_name"] = user_name
+    comment_data["timestamp"] = datetime.now(timezone.utc).isoformat()
     send_message(comment_data,"Tier_1_In_Queue")
     return {"message": "Comment created",
             "data":comment,
@@ -143,7 +261,7 @@ def get_comments(page: int = 1, event_id: str=Path(...)):
     limit = 20
     skip = (page - 1) * limit
     recent_comments = list(comments_collection.aggregate([
-        {"$match": {"event_id": event_id, "Is_Toxic": False}},
+        {"$match": {"event_id": ObjectId(event_id), "Is_Toxic": False}},
         {"$sort": {"timestamp": DESCENDING}},
         {"$skip": skip},
         {"$limit": limit},
@@ -158,11 +276,19 @@ def get_comments(page: int = 1, event_id: str=Path(...)):
         {
             "$addFields": {
                 "user_name": {
-                    "$ifNull": [{"$arrayElemAt": ["$_user.user_name", 0]}, None]
+                    "$arrayElemAt": ["$_user.user_name", 0]
                 }
             }
         },
-        {"$project": {"_user": 0}},
+        {
+            "$project": {
+                "_id": 1,
+                "user_id": 1,
+                "user_name": 1,
+                "timestamp": 1,
+                "comment_content": 1,
+            }
+        },
     ]))
 
     return jsonable_encoder(recent_comments, custom_encoder={ObjectId: str})
@@ -170,12 +296,17 @@ def get_comments(page: int = 1, event_id: str=Path(...)):
 
 @app.websocket("/ws/live_events/{event_id}")
 async def live_event_comments(websocket: WebSocket, event_id: str):
-    await connection_manager.connect(event_id, websocket)
+    user_id = websocket.headers.get("x-user-id")
+    if not user_id:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+
+    await connection_manager.connect(event_id, user_id, websocket)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        connection_manager.disconnect(event_id, websocket)
+        connection_manager.disconnect(event_id, user_id, websocket)
 
 
 @app.get("/live_events/{event_id}/page", include_in_schema=False)

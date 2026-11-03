@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Moderation dashboard</title>
+  <script src="/media/site-header.js" defer></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "DM Sans", "Trebuchet MS", sans-serif;
+      color: #202b36;
+      background: #f3f6f9;
+      font-synthesis: none;
+      --muted: #687787;
+      --border: #e2e8ef;
+      --blue: #2876d2;
+      --red: #d34b52;
+      --green: #2b9a72;
+      --amber: #d19a34;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { min-width: 320px; min-height: 100vh; margin: 0; }
+    button, select { font: inherit; }
+    main { width: min(1200px, 100%); margin: 0 auto; padding: 34px 24px 56px; }
+    .heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 26px; }
+    h2 { margin: 0 0 6px; font-size: clamp(24px, 4vw, 32px); letter-spacing: -.035em; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 14px; }
+    .filters { display: flex; align-items: center; gap: 10px; }
+    label { color: #526170; font-size: 13px; font-weight: 600; }
+    select, button { min-height: 40px; padding: 8px 12px; color: #263545; background: #fff; border: 1px solid #cbd5df; border-radius: 6px; }
+    select { min-width: 210px; }
+    button { color: #fff; background: #286fc2; border-color: #286fc2; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .6; }
+    select:focus-visible, button:focus-visible { outline: 3px solid #2876d244; outline-offset: 2px; }
+    #status { min-height: 20px; margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+    #status[data-state="error"] { color: #a3343a; }
+    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .card, .panel { background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 3px 12px #24364a08; }
+    .card { min-height: 132px; padding: 18px 20px; }
+    .card-label { margin: 0 0 12px; color: var(--muted); font-size: 13px; font-weight: 600; }
+    .card-value { margin: 0; font-size: clamp(25px, 4vw, 34px); font-weight: 700; letter-spacing: -.04em; }
+    .card-note { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+    .content-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: 16px; }
+    .panel { padding: 20px; }
+    .panel h3 { margin: 0 0 5px; font-size: 16px; }
+    .panel-intro { margin: 0 0 20px; color: var(--muted); font-size: 12px; }
+    .bar-group + .bar-group { margin-top: 21px; }
+    .bar-title { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 13px; }
+    .bar-title strong { font-weight: 600; }
+    .bar-track { height: 10px; overflow: hidden; background: #edf1f5; border-radius: 99px; }
+    .bar-fill { height: 100%; min-width: 0; border-radius: inherit; transition: width .25s ease; }
+    .bar-fill.red { background: var(--red); }
+    .bar-fill.green { background: var(--green); }
+    .bar-fill.amber { background: var(--amber); }
+    .bar-fill.blue { background: var(--blue); }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 20px; color: var(--muted); font-size: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .legend i { width: 9px; height: 9px; border-radius: 3px; }
+    .latency-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+    .latency { padding: 13px; background: #f7f9fb; border-radius: 7px; }
+    .latency p { margin: 0; }
+    .latency-label { color: var(--muted); font-size: 11px; }
+    .latency-value { margin-top: 5px !important; font-size: 19px; font-weight: 700; }
+    .section-label { margin: 20px 0 10px; color: #344557; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .footer { margin-top: 18px; color: var(--muted); font-size: 11px; }
+    @media (max-width: 760px) {
+      .heading { align-items: flex-start; flex-direction: column; }
+      .content-grid { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 480px) {
+      main { padding: 24px 14px 40px; }
+      .filters { align-items: stretch; width: 100%; flex-direction: column; }
+      select { width: 100%; }
+      .cards { gap: 9px; }
+      .card { min-height: 115px; padding: 15px; }
+      .panel { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main>
+    <section class="heading" id="dashboard-heading" aria-labelledby="dashboard-title" hidden>
+      <div>
+        <h2 id="dashboard-title">Moderation overview</h2>
+        <p class="subtitle">Comment volume, classification outcomes, and processing latency.</p>
+      </div>
+      <div class="filters">
+        <label for="event-select">Event</label>
+        <select id="event-select" aria-label="Filter metrics by event">
+          <option value="">All events</option>
+        </select>
+        <button id="refresh-button" type="button">Refresh</button>
+      </div>
+    </section>
+
+    <p id="status" role="status" aria-live="polite">Loading metrics...</p>
+
+    <section class="cards" id="dashboard-cards" aria-label="Key metrics" hidden>
+      <article class="card">
+        <p class="card-label">Comments</p>
+        <p class="card-value" id="total-comments">—</p>
+        <p class="card-note" id="comment-scope">Selected event</p>
+      </article>
+      <article class="card">
+        <p class="card-label">Toxic comments</p>
+        <p class="card-value" id="toxic-comments">—</p>
+        <p class="card-note" id="toxic-rate">— of comments</p>
+      </article>
+      <article class="card">
+        <p class="card-label">Non-toxic comments</p>
+        <p class="card-value" id="nontoxic-comments">—</p>
+        <p class="card-note" id="nontoxic-rate">— of comments</p>
+      </article>
+      <article class="card">
+        <p class="card-label">Tier 1 reviewed</p>
+        <p class="card-value" id="tier1-comments">—</p>
+        <p class="card-note" id="tier1-missed">— escalated for review</p>
+      </article>
+      <article class="card">
+        <p class="card-label">Tier 2 reviewed</p>
+        <p class="card-value" id="tier2-comments">—</p>
+        <p class="card-note">Comments classified after escalation</p>
+      </article>
+      <article class="card">
+        <p class="card-label">Active events</p>
+        <p class="card-value" id="active-events">—</p>
+        <p class="card-note">Across all events</p>
+      </article>
+      <article class="card">
+        <p class="card-label">Registered users</p>
+        <p class="card-value" id="total-users">—</p>
+        <p class="card-note">Across the platform</p>
+      </article>
+    </section>
+
+    <section class="content-grid" id="dashboard-details" aria-label="Detailed metrics" hidden>
+      <article class="panel">
+        <h3>Outcomes &amp; tier activity</h3>
+        <p class="panel-intro">Counts for the selected event. Categories overlap when a comment is reviewed by a tier.</p>
+        <div id="classification-chart"></div>
+        <div class="legend" aria-label="Chart legend">
+          <span><i style="background:var(--red)"></i>Toxic</span>
+          <span><i style="background:var(--green)"></i>Non-toxic</span>
+          <span><i style="background:var(--amber)"></i>Awaiting Tier 2</span>
+          <span><i style="background:var(--blue)"></i>Tier 2 review</span>
+        </div>
+      </article>
+      <article class="panel">
+        <h3>Processing latency</h3>
+        <p class="panel-intro">Average, P95, and P99 comment processing time.</p>
+        <div class="section-label">Tier 1</div>
+        <div class="latency-grid">
+          <div class="latency"><p class="latency-label">Average</p><p class="latency-value" id="tier1-average">—</p></div>
+          <div class="latency"><p class="latency-label">P95</p><p class="latency-value" id="tier1-p95">—</p></div>
+          <div class="latency"><p class="latency-label">P99</p><p class="latency-value" id="tier1-p99">—</p></div>
+        </div>
+        <div class="section-label">Tier 2</div>
+        <div class="latency-grid">
+          <div class="latency"><p class="latency-label">Average</p><p class="latency-value" id="tier2-average">—</p></div>
+          <div class="latency"><p class="latency-label">P95</p><p class="latency-value" id="tier2-p95">—</p></div>
+          <div class="latency"><p class="latency-label">P99</p><p class="latency-value" id="tier2-p99">—</p></div>
+        </div>
+        <p class="footer">Latency values are in milliseconds. Tier 2 values are zero when no comments have reached Tier 2.</p>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const eventSelect = document.querySelector("#event-select");
+    const refreshButton = document.querySelector("#refresh-button");
+    const statusMessage = document.querySelector("#status");
+    const numberFormat = new Intl.NumberFormat();
+    const apiBase = "/api/v1/monitoring_service";
+    let activeRequest = 0;
+
+    function setStatus(message, state = "loading") {
+      statusMessage.textContent = message;
+      statusMessage.dataset.state = state;
+    }
+
+    function formatNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? numberFormat.format(number) : "—";
+    }
+
+    function formatMilliseconds(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? `${number.toFixed(2)} ms` : "—";
+    }
+
+    async function requestJson(path, eventId = "") {
+      const url = new URL(`${apiBase}${path}`, window.location.origin);
+      if (eventId) url.searchParams.set("event_id", eventId);
+      const accessToken = sessionStorage.getItem("access_token");
+      const response = await fetch(url, {
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+      });
+      if (!response.ok) {
+        const error = new Error(`${path} returned ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return response.json();
+    }
+
+    function setDashboardVisible(visible) {
+      document.querySelector("#dashboard-heading").hidden = !visible;
+      document.querySelector("#dashboard-cards").hidden = !visible;
+      document.querySelector("#dashboard-details").hidden = !visible;
+    }
+
+    async function loadEvents() {
+      const events = await requestJson("/live_events/list");
+      if (!Array.isArray(events)) throw new Error("The events endpoint returned an invalid response.");
+      const selectedEvent = eventSelect.value;
+      for (const event of events) {
+        if (!event || typeof event._id !== "string") continue;
+        const option = document.createElement("option");
+        option.value = event._id;
+        option.textContent = event.name || `Event ${event._id.slice(-6)}`;
+        eventSelect.append(option);
+      }
+      if (selectedEvent && [...eventSelect.options].some((option) => option.value === selectedEvent)) {
+        eventSelect.value = selectedEvent;
+      }
+    }
+
+    function renderBars(container, bars) {
+      container.replaceChildren();
+      const maxValue = Math.max(1, ...bars.map((bar) => Number(bar.value) || 0));
+      for (const bar of bars) {
+        const group = document.createElement("div");
+        group.className = "bar-group";
+        const title = document.createElement("div");
+        title.className = "bar-title";
+        const label = document.createElement("strong");
+        label.textContent = bar.label;
+        const value = document.createElement("span");
+        value.textContent = formatNumber(bar.value);
+        title.append(label, value);
+        const track = document.createElement("div");
+        track.className = "bar-track";
+        track.setAttribute("role", "img");
+        track.setAttribute("aria-label", `${bar.label}: ${formatNumber(bar.value)}`);
+        const fill = document.createElement("div");
+        fill.className = `bar-fill ${bar.color}`;
+        fill.style.width = `${Math.max(0, (Number(bar.value) || 0) / maxValue * 100)}%`;
+        track.append(fill);
+        group.append(title, track);
+        container.append(group);
+      }
+    }
+
+    function setText(id, value) {
+      document.getElementById(id).textContent = value;
+    }
+
+    async function loadDashboard() {
+      const requestId = ++activeRequest;
+      const eventId = eventSelect.value;
+      refreshButton.disabled = true;
+      setStatus("Loading metrics...");
+      try {
+        const scopedPaths = {
+          comments: "/comments/count",
+          toxic: "/comments/toxic/count",
+          nontoxic: "/comments/nontoxic/count",
+          tier1Toxic: "/comments/toxic/count/tier_1",
+          tier1Nontoxic: "/comments/nontoxic/count/tier_1",
+          tier1: "/comments/count/tier_1",
+          missed: "/comments/missed_count/tier_1",
+          tier2Toxic: "/comments/toxic/count/tier_2",
+          tier2Nontoxic: "/comments/nontoxic/count/tier_2",
+          tier2: "/comments/count/tier_2",
+          tier1Average: "/comments/tier_1/average_processing_time",
+          tier2Average: "/comments/tier_2/average_processing_time",
+          tier1P95: "/comments/tier_1/p95_processing_time",
+          tier2P95: "/comments/tier_2/p95_processing_time",
+          tier1P99: "/comments/tier_1/p99_processing_time",
+          tier2P99: "/comments/tier_2/p99_processing_time",
+        };
+        const entries = Object.entries(scopedPaths);
+        const results = await Promise.all([
+          ...entries.map(([, path]) => requestJson(path, eventId)),
+          requestJson("/users/count"),
+          requestJson("/live_events/count/active"),
+        ]);
+        if (requestId !== activeRequest) return;
+
+        const metrics = Object.fromEntries(entries.map(([key], index) => [key, results[index]]));
+        const users = results[entries.length];
+        const activeEvents = results[entries.length + 1];
+        const total = Number(metrics.comments.total_comments) || 0;
+        const toxic = Number(metrics.toxic.toxic_comments_count) || 0;
+        const nontoxic = Number(metrics.nontoxic.non_toxic_comments_count) || 0;
+        const missed = Number(metrics.missed.missed_comments_count) || 0;
+        const tier1Toxic = Number(metrics.tier1Toxic.toxic_comments_count) || 0;
+        const tier1Nontoxic = Number(metrics.tier1Nontoxic.non_toxic_comments_count) || 0;
+        const tier2Toxic = Number(metrics.tier2Toxic.toxic_comments_count) || 0;
+        const tier2Nontoxic = Number(metrics.tier2Nontoxic.non_toxic_comments_count) || 0;
+
+        setText("total-comments", formatNumber(total));
+        setText("toxic-comments", formatNumber(toxic));
+        setText("toxic-rate", `${total ? (toxic / total * 100).toFixed(1) : "0.0"}% of comments`);
+        setText("nontoxic-comments", formatNumber(nontoxic));
+        setText("nontoxic-rate", `${total ? (nontoxic / total * 100).toFixed(1) : "0.0"}% of comments`);
+        setText("tier1-comments", formatNumber(metrics.tier1.tier1_comments_count));
+        setText("tier1-missed", `${formatNumber(missed)} awaiting Tier 2`);
+        setText("tier2-comments", formatNumber(metrics.tier2.tier2_comments_count));
+        setText("active-events", formatNumber(activeEvents.live_events_count));
+        setText("total-users", formatNumber(users.total_users));
+        setText("comment-scope", eventId ? "Selected event" : "Across all events");
+        setText("tier1-average", formatMilliseconds(metrics.tier1Average.average_processing_time_ms));
+        setText("tier1-p95", formatMilliseconds(metrics.tier1P95.p95_processing_time_ms));
+        setText("tier1-p99", formatMilliseconds(metrics.tier1P99.p99_processing_time_ms));
+        setText("tier2-average", formatMilliseconds(metrics.tier2Average.average_processing_time_ms));
+        setText("tier2-p95", formatMilliseconds(metrics.tier2P95.p95_processing_time_ms));
+        setText("tier2-p99", formatMilliseconds(metrics.tier2P99.p99_processing_time_ms));
+        renderBars(document.querySelector("#classification-chart"), [
+          { label: "Toxic", value: toxic, color: "red" },
+          { label: "Non-toxic", value: nontoxic, color: "green" },
+          { label: "Awaiting Tier 2", value: missed, color: "amber" },
+          { label: "Tier 1 · toxic", value: tier1Toxic, color: "red" },
+          { label: "Tier 1 · non-toxic", value: tier1Nontoxic, color: "green" },
+          { label: "Tier 2 · toxic", value: tier2Toxic, color: "red" },
+          { label: "Tier 2 · non-toxic", value: tier2Nontoxic, color: "blue" },
+        ]);
+        setStatus(`${formatNumber(users.total_users)} users · Metrics updated ${new Date().toLocaleTimeString()}`, "success");
+      } catch (error) {
+        if (requestId !== activeRequest) return;
+        if (error.status === 403) {
+          setDashboardVisible(false);
+          setStatus("Admin access required to view moderation metrics.", "error");
+        } else if (error.status === 401) {
+          setDashboardVisible(false);
+          setStatus("Sign in to an admin account to view moderation metrics.", "error");
+        } else {
+          setStatus(`Could not load dashboard metrics. ${error.message}`, "error");
+        }
+      } finally {
+        if (requestId === activeRequest) refreshButton.disabled = false;
+      }
+    }
+
+    eventSelect.addEventListener("change", loadDashboard);
+    refreshButton.addEventListener("click", loadDashboard);
+    loadEvents()
+      .then(() => {
+        setDashboardVisible(true);
+        return loadDashboard();
+      })
+      .catch((error) => {
+        setDashboardVisible(false);
+        if (error.status === 403) {
+          setStatus("Admin access required to view moderation metrics.", "error");
+        } else if (error.status === 401) {
+          setStatus("Sign in to an admin account to view moderation metrics.", "error");
+        } else {
+          setStatus(`Could not load events. ${error.message}`, "error");
+        }
+        refreshButton.disabled = false;
+      });
+  </script>
+</body>
+</html>

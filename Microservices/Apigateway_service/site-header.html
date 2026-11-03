@@ -91,19 +91,25 @@
     box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
   }
 
+  .site-account-link,
   .site-logout-button {
+    display: block;
+    width: 100%;
     flex: 0 0 auto;
     padding: 8px 12px;
-    color: #1769c2;
+    color: #263238;
     background: #fff;
     border: 0;
     border-radius: 5px;
     font: inherit;
     font-size: 13px;
     font-weight: 600;
+    text-align: left;
+    text-decoration: none;
     cursor: pointer;
   }
 
+  .site-account-link:hover,
   .site-logout-button:hover:not(:disabled) {
     background: #f3f6f8;
   }
@@ -138,6 +144,7 @@
       <span id="site-profile-email" class="site-profile-email" role="tooltip"></span>
     </button>
     <div id="site-account-menu" class="site-account-menu" hidden>
+      <a id="site-admin-dashboard" class="site-account-link" href="/admin/dashboard" hidden>Admin dashboard</a>
       <button id="site-logout-button" class="site-logout-button" type="button">Log out</button>
     </div>
   </div>

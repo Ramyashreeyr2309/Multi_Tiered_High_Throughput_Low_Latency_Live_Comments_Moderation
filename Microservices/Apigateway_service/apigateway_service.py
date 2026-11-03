@@ -3,6 +3,7 @@ import time
 import httpx
 import websockets
 from pathlib import Path
+from urllib.parse import urlencode
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, Depends, status
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.websockets import WebSocketState
@@ -51,6 +52,7 @@ BROWSER_ROUTE_MAP = {
     ("GET", "/forgot_password"): ("user_service", "forgot_password"),
     ("GET", "/events"): ("live_event_service", "live_events_page"),
     ("GET", "/events/{event_id}"): ("live_event_service", "live_events/{event_id}/page"),
+    ("GET", "/admin/dashboard"): ("monitoring_service", "admin_dashboard_page"),
     ("GET", "/media/{asset_path:path}"): ("live_event_service", "{asset_path}"),
 }
 
@@ -112,16 +114,15 @@ async def verify_auth_token(
         if browser_route is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found")
         return None
-    print("HI1")
-    endpoint = (
-        request.method,
-        request.path_params["path"].strip("/"),
-    )
-    service = request.path_params.get("service", "user_service")
-    if endpoint in PUBLIC_ENDPOINTS.get(service, set()):
-        return None
+    else:
+        endpoint = (
+            request.method,
+            request.path_params["path"].strip("/"),
+        )
+        service = request.path_params.get("service", "user_service")
+        if endpoint in PUBLIC_ENDPOINTS.get(service, set()):
+            return None
 
-    print("HI2")
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -129,7 +130,6 @@ async def verify_auth_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    print("HI3")
     token = credentials.credentials
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -137,14 +137,18 @@ async def verify_auth_token(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    print("HI4")
     try:
         payload = decode_access_token(token)
-        print(payload)
         user_id: str = payload.get("user_id")
         mail_id: str = payload.get("mail_id")
         user_name: str = payload.get("user_name")
-        return {"user_id": user_id, "mail_id": mail_id, "role": payload.get("role"), "user_name": user_name}
+        role = payload.get("role")
+        if service == "monitoring_service" and role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin role required",
+            )
+        return {"user_id": user_id, "mail_id": mail_id, "role": role, "user_name": user_name}
     except TokenValidationError as error:
         raise credentials_exception from error
 
@@ -154,6 +158,9 @@ async def verify_auth_token(
 MICROSERVICE_ROUTES = {
     "user_service": "http://host.docker.internal:8001",
     "live_event_service": "http://host.docker.internal:8002",      # Ingestion API / RabbitMQ Producer
+    "tier_1_service": "http://host.docker.internal:8003",
+    "tier_2_service": "http://host.docker.internal:8004",
+    "monitoring_service": "http://host.docker.internal:8005",
 }
 
 
@@ -228,12 +235,28 @@ async def api_gateway_websocket_proxy(service: str, path: str, websocket: WebSoc
         await websocket.close(code=1008, reason="WebSocket service not found")
         return
 
+    access_token = websocket.query_params.get("access_token")
+    if not access_token:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    try:
+        current_user = decode_access_token(access_token)
+    except TokenValidationError:
+        await websocket.close(code=1008, reason="Invalid or expired access token")
+        return
+
     backend_url = MICROSERVICE_ROUTES[service].replace("http://", "ws://", 1)
     backend_url = f"{backend_url}/ws/{path}"
-    if websocket.url.query:
-        backend_url = f"{backend_url}?{websocket.url.query}"
+    backend_query = [
+        (key, value)
+        for key, value in websocket.query_params.multi_items()
+        if key != "access_token"
+    ]
+    if backend_query:
+        backend_url = f"{backend_url}?{urlencode(backend_query)}"
 
     headers = {}
+    headers["x-user-id"] = current_user["user_id"]
     origin = websocket.headers.get("origin")
     if origin:
         headers["Origin"] = origin

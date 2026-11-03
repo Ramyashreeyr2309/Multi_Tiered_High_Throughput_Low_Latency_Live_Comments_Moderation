@@ -25,17 +25,19 @@ async function loadSiteHeader() {
   const name = header.querySelector("#site-profile-name");
   const email = header.querySelector("#site-profile-email");
   const accountMenu = header.querySelector("#site-account-menu");
+  const adminDashboardLink = header.querySelector("#site-admin-dashboard");
   const logoutButton = header.querySelector("#site-logout-button");
   const accessToken = sessionStorage.getItem("access_token");
   const mailId = sessionStorage.getItem("mail_id");
 
-  if (!profile || !profileTrigger || !name || !email || !accountMenu || !logoutButton) {
+  if (!profile || !profileTrigger || !name || !email || !accountMenu || !adminDashboardLink || !logoutButton) {
     throw new Error("The shared site header profile controls are missing.");
   }
 
   if (accessToken && mailId) {
     name.textContent = sessionStorage.getItem("user_name") || mailId;
     email.textContent = mailId;
+    adminDashboardLink.hidden = sessionStorage.getItem("role") !== "admin";
     profile.hidden = false;
   }
 
@@ -66,6 +68,7 @@ async function loadSiteHeader() {
       sessionStorage.removeItem("token_type");
       sessionStorage.removeItem("user_name");
       sessionStorage.removeItem("mail_id");
+      sessionStorage.removeItem("role");
       window.location.replace("/login");
     }
   });

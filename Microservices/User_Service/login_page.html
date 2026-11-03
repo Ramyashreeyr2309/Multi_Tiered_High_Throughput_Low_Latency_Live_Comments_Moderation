@@ -104,6 +104,7 @@
         sessionStorage.setItem("token_type", result.token_type);
         sessionStorage.setItem("user_name", result.user_name);
         sessionStorage.setItem("mail_id", result.mail_id);
+        sessionStorage.setItem("role", result.role || "");
         showStatus("Signed in successfully. Opening live events...", "success");
         window.location.assign("/events");
       } catch (error) {

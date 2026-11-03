@@ -34,6 +34,8 @@
     #comment-list p { margin: 0; padding: 12px 2px; border-bottom: 1px solid #f0f1f2; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
     #comment-list strong { font-size: 12px; }
     #comment-list time { color: #7a8288; font-size: 11px; }
+    #load-more-button { display: block; width: 100%; padding: 12px 2px; color: #737b81; background: transparent; border: 0; font-size: 13px; text-align: center; cursor: pointer; }
+    #load-more-button:disabled { cursor: wait; }
     #empty-state { margin: 0; padding: 18px; color: #737b81; font-size: 13px; text-align: center; }
     #comment-form { padding: 12px 14px 14px; background: #fff; border-top: 1px solid #e8eaec; }
     #form-note { min-height: 16px; margin: 0 0 7px; color: #687078; font-size: 11px; }
@@ -73,7 +75,9 @@
             <h2>Live chat</h2>
             <p id="socket-status" role="status" aria-live="polite">Connecting to live chat...</p>
         </div>
-        <div id="comment-list" role="feed" aria-live="polite"></div>
+        <div id="comment-list" role="feed" aria-live="polite">
+          <button id="load-more-button" type="button" hidden>Load more comments</button>
+        </div>
         <p id="empty-state">No comments yet.</p>
         <form id="comment-form">
           <p id="form-note" aria-live="polite"></p>
@@ -100,6 +104,11 @@
     const eventDetails = document.querySelector("#event-details");
     const eventThumbnail = document.querySelector("#event-thumbnail");
     const thumbnailError = document.querySelector("#thumbnail-error");
+    const loadMoreButton = document.querySelector("#load-more-button");
+    const commentsPerPage = 20;
+    let currentCommentsPage = 1;
+    let hasMoreComments = false;
+    let loadingMoreComments = false;
     let redirectingToLogin = false;
     const originalFetch = window.fetch.bind(window);
     let refreshPromise;
@@ -178,8 +187,14 @@
       socketStatus.textContent = label;
     }
 
+    function parseTimestamp(value) {
+      if (typeof value !== "string") return new Date(value);
+      const timestamp = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`;
+      return new Date(timestamp);
+    }
+
     function formatTime(value) {
-      const date = new Date(value);
+      const date = parseTimestamp(value);
       if (Number.isNaN(date.getTime())) return "Just now";
       return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
     }
@@ -190,7 +205,7 @@
     }
 
     function commentKey(comment) {
-      return comment._id || `${Date.parse(comment.timestamp)}-${comment.comment_content}`;
+      return comment._id || `${parseTimestamp(comment.timestamp).getTime()}-${comment.comment_content}`;
     }
 
     function makeCommentRow(comment) {
@@ -198,7 +213,10 @@
       const author = document.createElement("strong");
       author.textContent = comment.user_name || "Viewer";
       const time = document.createElement("time");
-      time.dateTime = comment.timestamp || "";
+      const timestamp = parseTimestamp(comment.timestamp);
+      time.dateTime = Number.isNaN(timestamp.getTime())
+        ? comment.timestamp || ""
+        : timestamp.toISOString();
       time.textContent = ` · ${formatTime(comment.timestamp)}`;
       const text = document.createElement("span");
       text.textContent = `: ${comment.comment_content || ""}`;
@@ -206,19 +224,46 @@
       return row;
     }
 
-    function renderComments() {
+    function renderComments({ scrollToBottom = true, previousScrollHeight = 0, previousScrollTop = 0 } = {}) {
       commentList.replaceChildren();
+      loadMoreButton.hidden = !hasMoreComments;
+      commentList.append(loadMoreButton);
       for (const comment of comments) commentList.append(makeCommentRow(comment));
       emptyState.hidden = comments.length > 0;
-      commentList.scrollTop = commentList.scrollHeight;
+      if (scrollToBottom) {
+        commentList.scrollTop = commentList.scrollHeight;
+      } else {
+        commentList.scrollTop = previousScrollTop + commentList.scrollHeight - previousScrollHeight;
+      }
+    }
+
+    function mergeComments(newComments) {
+      for (const comment of newComments) {
+        const key = commentKey(comment);
+        const existingIndex = comments.findIndex((existing) => commentKey(existing) === key);
+        if (existingIndex >= 0) {
+          comments[existingIndex] = { ...comments[existingIndex], ...comment };
+        } else {
+          comments.push(comment);
+        }
+      }
+      comments.sort((first, second) => parseTimestamp(first.timestamp) - parseTimestamp(second.timestamp));
     }
 
     function addComment(comment) {
-      const key = commentKey(comment);
-      if (comments.some((existing) => commentKey(existing) === key)) return;
-      comments.push(comment);
-      comments.sort((first, second) => Date.parse(first.timestamp) - Date.parse(second.timestamp));
+      mergeComments([comment]);
       renderComments();
+    }
+
+    function removeComment(commentId) {
+      if (typeof commentId !== "string" || !commentId) return;
+      const remainingComments = comments.filter((comment) => commentKey(comment) !== commentId);
+      if (remainingComments.length === comments.length) return;
+
+      const previousScrollHeight = commentList.scrollHeight;
+      const previousScrollTop = commentList.scrollTop;
+      comments.splice(0, comments.length, ...remainingComments);
+      renderComments({ scrollToBottom: false, previousScrollHeight, previousScrollTop });
     }
 
     async function loadEvent() {
@@ -253,7 +298,7 @@
 
     async function loadComments() {
       try {
-        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?page=1`, {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?page=${currentCommentsPage}`, {
           headers: { Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}` }
         });
         if (response.status === 401) {
@@ -262,32 +307,88 @@
         }
         if (!response.ok) throw new Error("Could not load comments");
         const history = await response.json();
-        for (const comment of history.reverse()) addComment(comment);
+        mergeComments(history);
+        hasMoreComments = history.length === commentsPerPage;
       } catch {
         emptyState.textContent = "Comment history could not be loaded.";
       }
       renderComments();
     }
 
+    loadMoreButton.addEventListener("click", async () => {
+      if (loadingMoreComments || !hasMoreComments) return;
+      loadingMoreComments = true;
+      loadMoreButton.disabled = true;
+      loadMoreButton.textContent = "Loading more comments...";
+      try {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?page=${currentCommentsPage + 1}`, {
+          headers: { Authorization: `******"access_token") || ""}` }
+        });
+        if (response.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!response.ok) throw new Error("Could not load comments");
+        const history = await response.json();
+        const previousScrollHeight = commentList.scrollHeight;
+        const previousScrollTop = commentList.scrollTop;
+        loadMoreButton.textContent = "Load more comments";
+        mergeComments(history);
+        currentCommentsPage += 1;
+        hasMoreComments = history.length === commentsPerPage;
+        renderComments({ scrollToBottom: false, previousScrollHeight, previousScrollTop });
+      } catch {
+        loadMoreButton.textContent = "Could not load comments. Try again";
+      } finally {
+        loadingMoreComments = false;
+        loadMoreButton.disabled = false;
+        if (hasMoreComments && loadMoreButton.textContent === "Loading more comments...") {
+          loadMoreButton.textContent = "Load more comments";
+        }
+      }
+    });
+
     function connectSocket() {
       if (!eventId) {
         setSocketState("Event ID missing");
         return;
       }
+      const accessToken = sessionStorage.getItem("access_token");
+      if (!accessToken) {
+        redirectToLogin();
+        return;
+      }
       const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(`${scheme}//${window.location.host}/api/v1/live_event_service/ws/live_events/${encodeURIComponent(eventId)}`);
+      const socketUrl = new URL(`${scheme}//${window.location.host}/api/v1/live_event_service/ws/live_events/${encodeURIComponent(eventId)}`);
+      socketUrl.searchParams.set("access_token", accessToken);
+      const socket = new WebSocket(socketUrl);
       setSocketState("Connecting to live chat...");
       socket.addEventListener("open", () => {
         reconnectDelay = 1000;
         setSocketState("Live chat connected");
       });
       socket.addEventListener("message", (message) => {
-        try { addComment(JSON.parse(message.data)); } catch { /* Ignore malformed updates. */ }
+        try {
+          const update = JSON.parse(message.data);
+          if (update && update.type === "remove_comment") {
+            removeComment(update.comment_id);
+          } else {
+            addComment(update);
+          }
+        } catch { /* Ignore malformed updates. */ }
       });
       socket.addEventListener("error", () => setSocketState("Live chat connection issue"));
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", async (event) => {
         setSocketState("Reconnecting to live chat...");
         window.clearTimeout(reconnectTimer);
+        if (event.code === 1008) {
+          const refreshedToken = await refreshAccessToken();
+          if (!refreshedToken) {
+            redirectToLogin();
+            return;
+          }
+          reconnectDelay = 1000;
+        }
         reconnectTimer = window.setTimeout(connectSocket, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 12000);
       });
