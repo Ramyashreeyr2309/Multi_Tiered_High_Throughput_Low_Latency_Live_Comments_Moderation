@@ -1,0 +1,4 @@
+fastapi
+pymongo
+pika
+uvicorn[standard]

@@ -1,0 +1,17 @@
+fastapi
+email-validator
+pymongo
+pika
+redis
+bcrypt
+python-jose[cryptography]
+river
+sentence-transformers<6
+transformers<5
+optimum[onnxruntime]<2
+# Standard installation (includes uvloop, httptools, and performance extensions)
+uvicorn[standard]
+aiosmtpd
+websocket
+websockets>=14
+locust

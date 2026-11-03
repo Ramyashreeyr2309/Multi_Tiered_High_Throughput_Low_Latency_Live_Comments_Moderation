@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Create account · Live Stream App</title>
+  <script src="/media/site-header.js" defer></script>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "DM Sans", "Trebuchet MS", sans-serif;
+      color: #202124;
+      background: #f7f8f8;
+      font-synthesis: none;
+    }
+
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { min-width: 320px; min-height: 100vh; margin: 0; }
+    button, input { font: inherit; }
+    main { display: grid; min-height: calc(100vh - 64px); place-items: center; padding: 36px 20px; }
+    .register-card { width: min(100%, 440px); padding: 34px; background: #fff; border: 1px solid #e1e4e6; border-radius: 8px; }
+    .register-card h2 { margin: 0 0 8px; font-size: 25px; }
+    .intro { margin: 0 0 26px; color: #687078; font-size: 14px; line-height: 1.5; }
+    .field { margin-bottom: 18px; }
+    .verification-field { margin-top: 18px; }
+    label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 600; }
+    input { display: block; width: 100%; min-height: 44px; padding: 10px 12px; color: #202124; background: #fff; border: 1px solid #cbd0d4; border-radius: 5px; outline: none; }
+    input:focus { border-color: #2876d2; box-shadow: 0 0 0 2px #2876d222; }
+    input:read-only { color: #687078; background: #f7f8f8; }
+    .primary-button { width: 100%; min-height: 44px; padding: 10px 16px; color: #fff; background: #1769c2; border: 0; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; }
+    .primary-button:hover:not(:disabled) { background: #0e58a7; }
+    .primary-button:disabled { opacity: .65; cursor: wait; }
+    #form-status { min-height: 20px; margin: 14px 0 0; color: #687078; font-size: 13px; line-height: 1.5; }
+    #form-status[data-state="error"] { color: #9c3027; }
+    #form-status[data-state="success"] { color: #216e39; }
+    .login-link { margin: 20px 0 0; color: #687078; font-size: 13px; text-align: center; }
+    .login-link a { color: #1769c2; font-weight: 600; text-decoration: none; }
+    .login-link a:hover { text-decoration: underline; }
+    @media (max-width: 520px) {
+      main { min-height: calc(100vh - 56px); padding: 22px 14px; }
+      .register-card { padding: 26px 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="site-header"></div>
+  <main>
+    <section class="register-card" aria-labelledby="register-heading">
+      <h2 id="register-heading">Create your account</h2>
+      <p class="intro">Enter your details and verify your email to join live events.</p>
+      <form id="registration-form">
+        <div class="field">
+          <label for="user-name">Name</label>
+          <input id="user-name" name="user_name" type="text" autocomplete="name" required>
+        </div>
+        <div class="field">
+          <label for="mail-id">Email address</label>
+          <input id="mail-id" name="mail_id" type="email" autocomplete="email" required>
+        </div>
+        <button id="send-otp-button" class="primary-button" type="button">Send verification code</button>
+        <div id="verification-fields" hidden>
+          <div class="field verification-field">
+            <label for="otp">Email verification code</label>
+            <input id="otp" name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" required disabled>
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" required disabled>
+          </div>
+          <button id="register-button" class="primary-button" type="submit" disabled>Create account</button>
+        </div>
+        <p id="form-status" role="status" aria-live="polite"></p>
+      </form>
+      <p class="login-link">Already have an account? <a href="/login">Sign in</a></p>
+    </section>
+  </main>
+  <script>
+    const registrationForm = document.querySelector("#registration-form");
+    const sendOtpButton = document.querySelector("#send-otp-button");
+    const verificationFields = document.querySelector("#verification-fields");
+    const otpInput = document.querySelector("#otp");
+    const passwordInput = document.querySelector("#password");
+    const registerButton = document.querySelector("#register-button");
+    const formStatus = document.querySelector("#form-status");
+    const nameInput = document.querySelector("#user-name");
+    const mailInput = document.querySelector("#mail-id");
+
+    function showStatus(message, state) {
+      formStatus.textContent = message;
+      formStatus.dataset.state = state;
+    }
+
+    async function readResponse(response, fallbackMessage) {
+      let result;
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error(fallbackMessage);
+      }
+      if (!response.ok) {
+        throw new Error(typeof result.detail === "string" ? result.detail : fallbackMessage);
+      }
+      return result;
+    }
+
+    sendOtpButton.addEventListener("click", async () => {
+      if (!registrationForm.reportValidity()) return;
+      sendOtpButton.disabled = true;
+      showStatus("Sending verification code...", "loading");
+
+      const params = new URLSearchParams({
+        mail_id: mailInput.value,
+        user_name: nameInput.value
+      });
+      try {
+        const response = await fetch(`/api/v1/user_service/user/registration/?${params.toString()}`);
+        await readResponse(response, "Could not send the verification code.");
+        nameInput.readOnly = true;
+        mailInput.readOnly = true;
+        otpInput.disabled = false;
+        passwordInput.disabled = false;
+        registerButton.disabled = false;
+        verificationFields.hidden = false;
+        sendOtpButton.hidden = true;
+        otpInput.focus();
+        showStatus("OTP captured by the local SMTP debug server. Check the terminal running aiosmtpd on localhost:1025; this setup does not send to your inbox. The OTP expires in 5 minutes.", "success");
+      } catch (error) {
+        showStatus(error.message || "Could not connect to the User Service. Try again.", "error");
+        sendOtpButton.disabled = false;
+      }
+    });
+
+    registrationForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      registerButton.disabled = true;
+      showStatus("Creating your account...", "loading");
+
+      const formData = new FormData(registrationForm);
+      try {
+        const response = await fetch("/api/v1/user_service/user/registration/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mail_id: formData.get("mail_id"),
+            user_name: formData.get("user_name"),
+            password: formData.get("password"),
+            otp: formData.get("otp")
+          })
+        });
+        await readResponse(response, "Could not create your account.");
+        showStatus("Account created successfully. You can now sign in.", "success");
+        registrationForm.querySelectorAll("input, button").forEach((control) => {
+          control.disabled = true;
+        });
+      } catch (error) {
+        showStatus(error.message || "Could not connect to the User Service. Try again.", "error");
+        registerButton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

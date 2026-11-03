@@ -1,0 +1,6 @@
+fastapi
+httpx
+redis
+python-jose[cryptography]
+uvicorn[standard]
+websockets>=14

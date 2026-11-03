@@ -1,0 +1,20 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/Microservices
+
+COPY Live_Event_Service/requirements.txt /app/Microservices/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /app/Microservices/requirements.txt
+
+COPY Message_Queue_Util /app/Microservices/Message_Queue_Util
+COPY Live_Event_Service /app/Microservices/Live_Event_Service
+
+WORKDIR /app/Microservices
+
+EXPOSE 8002
+
+CMD ["uvicorn", "Live_Event_Service.live_event_service:app", "--host", "0.0.0.0", "--port", "8002"]
