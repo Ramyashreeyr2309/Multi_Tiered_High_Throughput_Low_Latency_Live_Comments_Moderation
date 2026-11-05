@@ -213,6 +213,10 @@ async def forward_request(
             detail=f"Backend microservice error: {str(exc)}"
         )
 
+@app.get("/")
+def health():
+    return {"status": "ok"}
+
 
 # 5. Reverse Proxy Route Handlers
 @app.api_route(
