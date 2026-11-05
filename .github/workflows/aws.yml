@@ -18,32 +18,32 @@ jobs:
           # 1. API Gateway
           - service-name: apigateway-service-service
             ecr-repo: microservices/apigateway-service
-            context-path: Microservices/Apigateway_service
+            context-path: Apigateway_service
 
           # 2. User Service
           - service-name: user-service
             ecr-repo: microservices/user-service
-            context-path: Microservices/User_Service
+            context-path: User_Service
 
           # 3. Live Event Service
           - service-name: live-event-service
             ecr-repo: microservices/live-event-service
-            context-path: Microservices/Live_Event_Service
+            context-path: Live_Event_Service
 
           # 4. Tier 1 Moderation Service (ONNX)
           - service-name: tier-1-service
             ecr-repo: microservices/tier-1-service
-            context-path: Microservices/Tier_1_Service
+            context-path: Tier_1_Service
             
           # 5. Tier 2 Moderation Service (LLM)
           - service-name: tier-2-service
             ecr-repo: microservices/tier-2-service
-            context-path: Microservices/Tier_2_service
+            context-path: Tier_2_service
 
           # 6. Monitoring Service
           - service-name: monitoring-service
             ecr-repo: microservices/monitoring
-            context-path: Microservices/Montoring_service
+            context-path: Montoring_service
             
     steps:
       - name: Checkout Repository Code
@@ -61,11 +61,12 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, Tag, and Push Image to ECR
+        working-directory: Microservices
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:$IMAGE_TAG -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:latest ${{ matrix.context-path }}
+          docker build -f Dockerfile -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:$IMAGE_TAG -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:latest ${{ matrix.context-path }} .
           docker push $ECR_REGISTRY/${{ matrix.ecr-repo }}:$IMAGE_TAG
           docker push $ECR_REGISTRY/${{ matrix.ecr-repo }}:latest
 
