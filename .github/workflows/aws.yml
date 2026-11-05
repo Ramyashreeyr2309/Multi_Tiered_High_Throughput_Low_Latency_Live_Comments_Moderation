@@ -38,7 +38,7 @@ jobs:
           # 5. Tier 2 Moderation Service (LLM)
           - service-name: tier-2-service
             ecr-repo: microservices/tier-2-service
-            context-path: Tier_2_service
+            context-path: Tier_2_Service
 
           # 6. Monitoring Service
           - service-name: monitoring-service
