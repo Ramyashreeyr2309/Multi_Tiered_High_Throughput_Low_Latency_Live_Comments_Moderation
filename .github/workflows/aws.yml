@@ -66,7 +66,7 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -f Dockerfile -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:$IMAGE_TAG -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:latest ${{ matrix.context-path }} .
+          docker build -f ${{ matrix.context-path }}/dockerfile -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:$IMAGE_TAG -t $ECR_REGISTRY/${{ matrix.ecr-repo }}:latest .
           docker push $ECR_REGISTRY/${{ matrix.ecr-repo }}:$IMAGE_TAG
           docker push $ECR_REGISTRY/${{ matrix.ecr-repo }}:latest
 
