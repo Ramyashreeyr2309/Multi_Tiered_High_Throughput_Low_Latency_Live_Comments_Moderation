@@ -46,9 +46,8 @@ redis_client = redis.Redis.from_url(
 )
 
 OTP_EXPIRATION_SECONDS = 300
-LOCAL_SMTP_HOST = "host.docker.internal"
-LOCAL_SMTP_PORT = 1025
-
+SMTP_HOST = os.getenv("SMTP_HOST", "host.docker.internal")
+SMTP_PORT = 1025
 
 class RefreshRequest(BaseModel):
     refresh_token: str
@@ -86,7 +85,7 @@ def generate_otp(length: int = 6) -> str:
 
 
 def send_local_email(email_to: str, name: str, otp: str):
-    """Submit an OTP email to the local debugging SMTP server on localhost:1025."""
+    """Submit an OTP email to the configured debugging SMTP server."""
     message = MIMEMultipart()
     message["From"] = "noreply@yourapp.local"
     message["To"] = email_to
@@ -95,7 +94,7 @@ def send_local_email(email_to: str, name: str, otp: str):
     body = f"Hello {name},\n\nYour OTP is: {otp}\nIt expires in {OTP_EXPIRATION_SECONDS // 60} minutes."
     message.attach(MIMEText(body, "plain"))
 
-    with smtplib.SMTP(LOCAL_SMTP_HOST, LOCAL_SMTP_PORT) as server:
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
         server.send_message(message)
 
 
@@ -183,7 +182,7 @@ def register_user_otp_request(mail_id: EmailStr, user_name: str, background_task
         redis_client.delete(redis_key)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="OTP could not be sent. Ensure the local SMTP debug server is running on localhost:1025.",
+            detail="OTP could not be sent. Ensure the configured SMTP debug server is running on port 1025.",
         ) from error
 
     return {
