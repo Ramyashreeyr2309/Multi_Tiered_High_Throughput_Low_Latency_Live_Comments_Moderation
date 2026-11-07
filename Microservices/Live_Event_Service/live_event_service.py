@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path as LocalPath
 
 from fastapi import FastAPI, status, Path, Header, WebSocket, WebSocketDisconnect
@@ -17,7 +18,9 @@ from bson.objectid import ObjectId
 
 
 # 1. Connect to MongoDB container
-client = MongoClient("mongodb://host.docker.internal:27017/")
+client = MongoClient(
+    os.getenv("MONGODB_URI", "mongodb://host.docker.internal:27017/")
+)
 
 # 2. Select Database and Collection (automatically created if they don't exist)
 db = client["maindb"]

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import httpx
 import websockets
@@ -17,7 +18,10 @@ security = HTTPBearer(auto_error=False)
 
 # Connect to Redis container on localhost:6379
 # decode_responses=True ensures Redis returns string instead of bytes
-redis_client = redis.Redis(host="host.docker.internal", port=6379, db=0, decode_responses=True)
+redis_client = redis.from_url(
+    os.getenv("REDIS_URL", "redis://host.docker.internal:6379/0"),
+    decode_responses=True,
+)
 
 # Shared HTTPX Async Client for Reverse Proxying (Reuses Connection Pool)
 http_client = httpx.AsyncClient(timeout=10.0)
@@ -156,11 +160,15 @@ async def verify_auth_token(
 
 # 4. Service Registry Routing Map
 MICROSERVICE_ROUTES = {
-    "user_service": "http://host.docker.internal:8001",
-    "live_event_service": "http://host.docker.internal:8002",      # Ingestion API / RabbitMQ Producer
-    "tier_1_service": "http://host.docker.internal:8003",
-    "tier_2_service": "http://host.docker.internal:8004",
-    "monitoring_service": "http://host.docker.internal:8005",
+    "user_service": os.getenv("USER_SERVICE_URL", "http://host.docker.internal:8001"),
+    "live_event_service": os.getenv(
+        "LIVE_EVENT_SERVICE_URL", "http://host.docker.internal:8002"
+    ),  # Ingestion API / RabbitMQ Producer
+    "tier_1_service": os.getenv("TIER_1_SERVICE_URL", "http://host.docker.internal:8003"),
+    "tier_2_service": os.getenv("TIER_2_SERVICE_URL", "http://host.docker.internal:8004"),
+    "monitoring_service": os.getenv(
+        "MONITORING_SERVICE_URL", "http://host.docker.internal:8005"
+    ),
 }
 
 

@@ -1,6 +1,18 @@
+import os
+
 import pika
 import json
 import time
+
+
+def _connection_parameters():
+    return pika.URLParameters(
+        os.getenv(
+            "RABBITMQ_URL",
+            "amqp://admin:secretpass@host.docker.internal:5672/%2F",
+        )
+    )
+
 
 def process_comment(ch, method,  body):
     """Callback function triggered when a new message arrives."""
@@ -16,15 +28,7 @@ def process_comment(ch, method,  body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def start_consumer(queue_name, process_message):
-    credentials = pika.PlainCredentials('admin', 'secretpass')
-    parameters = pika.ConnectionParameters(
-        host='host.docker.internal', 
-        port=5672, 
-        credentials=credentials
-    )
-
-    
-    connection = pika.BlockingConnection(parameters)
+    connection = pika.BlockingConnection(_connection_parameters())
     channel = connection.channel()
 
     channel.queue_declare(queue=queue_name, durable=True)
@@ -47,15 +51,7 @@ def start_consumer(queue_name, process_message):
 
 
 def start_batch_consumer(queue_name, process_message, batch_size, max_wait_time):
-
-    credentials = pika.PlainCredentials('admin', 'secretpass')
-    parameters = pika.ConnectionParameters(
-        host='host.docker.internal', 
-        port=5672, 
-        credentials=credentials
-    )
-
-    connection = pika.BlockingConnection(parameters)
+    connection = pika.BlockingConnection(_connection_parameters())
     channel = connection.channel()
     channel.queue_declare(queue=queue_name, durable=True)
 

@@ -40,12 +40,6 @@ def process_batch_comments(ch, batch):
         comments.append(comment)
         comment_id_map[comment_id] = body.get('user_name')
 
-# { "user_id": "123456789",
-# "comment_id": "123456,
-# "comment_content": "What a ill manner behavior person shit",
-# "event_id": "1"
-# }
-
     response = client.responses.create(
         model="gpt-6-luna",
         input=str(comments),
