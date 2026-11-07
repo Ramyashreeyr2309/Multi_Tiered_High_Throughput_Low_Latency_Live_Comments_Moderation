@@ -23,6 +23,7 @@ on:
 
 jobs:
   build-and-deploy:
+    if: ${{ inputs.service == 'all' || matrix.service-name == inputs.service }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
