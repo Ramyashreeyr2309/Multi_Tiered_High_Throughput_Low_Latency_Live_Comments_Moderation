@@ -13,7 +13,7 @@ on:
         type: choice
         options:
           - all
-          - apigateway-service-service
+          - apigateway-service
           - user-service
           - live-event-service
           - tier-1-service
@@ -30,7 +30,7 @@ jobs:
       matrix:
         include:
           # 1. API Gateway
-          - service-name: apigateway-service-service
+          - service-name: apigateway-service
             ecr-repo: microservices/apigateway-service
             context-path: Apigateway_service
 
