@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, status, Path, Header, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, EmailStr
@@ -11,7 +13,9 @@ from threading import Thread
 from bson import ObjectId
 
 
-client = MongoClient("mongodb://host.docker.internal:27017/")
+client = MongoClient(
+    os.getenv("MONGODB_URI", "mongodb://host.docker.internal:27017/")
+)
 
 # 2. Select Database and Collection (automatically created if they don't exist)
 db = client["maindb"]
@@ -21,7 +25,9 @@ user_collection = db["Users"]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.mongodb_client = MongoClient("mongodb://host.docker.internal:27017/")
+    app.mongodb_client = MongoClient(
+        os.getenv("MONGODB_URI", "mongodb://host.docker.internal:27017/")
+    )
     app.db = app.mongodb_client["maindb"]
 
     yield

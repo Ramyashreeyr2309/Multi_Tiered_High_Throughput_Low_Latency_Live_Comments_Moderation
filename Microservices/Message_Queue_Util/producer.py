@@ -1,14 +1,16 @@
+import os
+
 import pika
 import json
 import time
 
+
 def send_message(message_content, queue_name):
-    # Connect to RabbitMQ container
-    credentials = pika.PlainCredentials('admin', 'secretpass')
-    parameters = pika.ConnectionParameters(
-        host='host.docker.internal', 
-        port=5672, 
-        credentials=credentials
+    parameters = pika.URLParameters(
+        os.getenv(
+            "RABBITMQ_URL",
+            "amqp://admin:secretpass@host.docker.internal:5672/%2F",
+        )
     )
     
     connection = pika.BlockingConnection(parameters)

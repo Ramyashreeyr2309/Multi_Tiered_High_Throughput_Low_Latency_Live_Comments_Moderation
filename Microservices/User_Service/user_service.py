@@ -1,3 +1,4 @@
+import os
 import secrets
 import smtplib
 import string
@@ -27,7 +28,9 @@ from Token_Util.token_util import (
 import uvicorn
 
 # Connect to MongoDB container
-client = MongoClient("mongodb://host.docker.internal:27017/")
+client = MongoClient(
+    os.getenv("MONGODB_URI", "mongodb://host.docker.internal:27017/")
+)
 # Select Database and Collection (automatically created if they don't exist)
 db = client["maindb"]
 users_collection = db["Users"]
@@ -37,7 +40,10 @@ security = HTTPBearer()
 
 # Connect to Redis container on localhost:6379
 # decode_responses=True ensures Redis returns string instead of bytes
-redis_client = redis.Redis(host="host.docker.internal", port=6379, db=0, decode_responses=True)
+redis_client = redis.Redis.from_url(
+    os.getenv("REDIS_URL", "redis://host.docker.internal:6379/0"),
+    decode_responses=True,
+)
 
 OTP_EXPIRATION_SECONDS = 300
 LOCAL_SMTP_HOST = "host.docker.internal"
