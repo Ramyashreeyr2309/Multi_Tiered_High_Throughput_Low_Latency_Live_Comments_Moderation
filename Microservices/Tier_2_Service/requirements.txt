@@ -2,4 +2,3 @@ fastapi
 pika
 uvicorn[standard]
 openai
-boto3
