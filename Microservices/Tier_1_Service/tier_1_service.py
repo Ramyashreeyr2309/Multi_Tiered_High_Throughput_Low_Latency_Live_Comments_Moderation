@@ -49,10 +49,7 @@ def classify_comment(comment_content):
 def process_comment(ch, method, properties, body):
     """Callback function triggered when a new message arrives."""
     comment = json.loads(body.decode('utf-8'))
-    #print(f" [-->] Received: ID '{comment['comment_id']}' - Text: '{comment['text']}'")
     print(comment)
-    # Simulate inference work (e.g., MiniLM embedding + River prediction)
-    time.sleep(0.5) 
     
     #print(f" [v] Processed comment ID: {comment['comment_id']}")
     comment_content=comment['comment_content']
