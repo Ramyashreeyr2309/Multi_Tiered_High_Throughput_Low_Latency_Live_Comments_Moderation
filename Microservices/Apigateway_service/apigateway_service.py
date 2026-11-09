@@ -32,13 +32,20 @@ async def shutdown_event():
     await http_client.aclose()
     await redis_client.close()
 
+# 2. Rate Limiting Middleware / Dependency (Token Bucket Pattern)
+LOAD_TEST_HEADER_KEY = "X-Load-Test-Bypass"
+LOAD_TEST_SECRET = os.getenv("LOAD_TEST_SECRET_KEY", "staging-secret-123")
 
 # 2. Rate Limiting Middleware / Dependency (Token Bucket Pattern)
 async def check_rate_limit(request: Request):
+    # Check if request contains the valid load-testing bypass secret
+    if request.headers.get(LOAD_TEST_HEADER_KEY) == LOAD_TEST_SECRET:
+        return
+
     client_ip = request.client.host
     current_minute = int(time.time() // 60)
     key = f"rate_limit:{client_ip}:{current_minute}"
-    
+
     # Allow max 60 requests per minute per IP
     requests_count = await redis_client.incr(key)
     if requests_count == 1:
