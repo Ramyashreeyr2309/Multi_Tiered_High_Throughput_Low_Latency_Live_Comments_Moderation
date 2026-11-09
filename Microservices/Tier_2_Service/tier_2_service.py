@@ -7,14 +7,46 @@ from threading import Thread
 import asyncio
 from openai import OpenAI
 import os
+import logging
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 batch_size = 10
 max_wait_time = 5
+logger = logging.getLogger(__name__)
+
+
+def get_openai_api_key():
+    parameter_name = os.environ.get(
+        "OPENAI_API_KEY_PARAMETER_NAME",
+        "OPENAI_API_KEY",
+    )
+    environment_api_key = os.environ.get("OPENAI_API_KEY")
+
+    try:
+        response = boto3.client("ssm").get_parameter(
+            Name=parameter_name,
+            WithDecryption=True,
+        )
+        return response["Parameter"]["Value"]
+    except (BotoCoreError, ClientError) as error:
+        if environment_api_key:
+            logger.warning(
+                "Could not retrieve OpenAI API key from Parameter Store parameter "
+                "%r; falling back to OPENAI_API_KEY environment variable: %s",
+                parameter_name,
+                error,
+            )
+            return environment_api_key
+        raise RuntimeError(
+            f"Could not retrieve OpenAI API key from Parameter Store parameter "
+            f"{parameter_name!r}, and OPENAI_API_KEY is not set."
+        ) from error
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global client,server_loop, batch_size
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    client = OpenAI(api_key=get_openai_api_key())
     server_loop = asyncio.get_running_loop()
     Thread(
         target=start_batch_consumer,
