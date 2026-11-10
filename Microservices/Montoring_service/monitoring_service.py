@@ -237,6 +237,234 @@ def get_live_events_count():
         "live_events_count": live_events_count
     }
 
+
+@app.get("/dashboard/metrics")
+def get_dashboard_metrics(event_id: str = None):
+    event_filter = {"event_id": ObjectId(event_id)} if event_id else {}
+    pipeline = [
+        {"$match": event_filter},
+        {
+            "$facet": {
+                "counts": [
+                    {
+                        "$group": {
+                            "_id": None,
+                            "total": {"$sum": 1},
+                            "toxic": {
+                                "$sum": {"$cond": [{"$eq": ["$Is_Toxic", True]}, 1, 0]}
+                            },
+                            "nontoxic": {
+                                "$sum": {"$cond": [{"$eq": ["$Is_Toxic", False]}, 1, 0]}
+                            },
+                            "tier1Toxic": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$eq": ["$Is_Toxic", True]},
+                                                {"$eq": ["$resolved_by", "tier 1"]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "tier1Nontoxic": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$eq": ["$Is_Toxic", False]},
+                                                {"$eq": ["$resolved_by", "tier 1"]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "tier1": {
+                                "$sum": {
+                                    "$cond": [{"$eq": ["$resolved_by", "tier 1"]}, 1, 0]
+                                }
+                            },
+                            "missed": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$eq": ["$resolved_by", "tier 1"]},
+                                                {"$eq": [{"$ifNull": ["$Is_Toxic", None]}, None]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "tier2Toxic": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$eq": ["$Is_Toxic", True]},
+                                                {"$eq": ["$resolved_by", "tier 2"]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "tier2Nontoxic": {
+                                "$sum": {
+                                    "$cond": [
+                                        {
+                                            "$and": [
+                                                {"$eq": ["$Is_Toxic", False]},
+                                                {"$eq": ["$resolved_by", "tier 2"]},
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                }
+                            },
+                            "tier2": {
+                                "$sum": {
+                                    "$cond": [{"$eq": ["$resolved_by", "tier 2"]}, 1, 0]
+                                }
+                            },
+                        }
+                    }
+                ],
+                "tier1Latency": [
+                    {"$match": {"resolved_by": "tier 1"}},
+                    {
+                        "$group": {
+                            "_id": None,
+                            "average": {
+                                "$avg": {"$ifNull": ["$tier_1_processing_time_ms", 0]}
+                            },
+                            "percentiles": {
+                                "$percentile": {
+                                    "input": "$tier_1_processing_time_ms",
+                                    "p": [0.95, 0.99],
+                                    "method": "approximate",
+                                }
+                            },
+                        }
+                    },
+                ],
+                "tier2Latency": [
+                    {"$match": {"resolved_by": "tier 2"}},
+                    {
+                        "$group": {
+                            "_id": None,
+                            "average": {
+                                "$avg": {"$ifNull": ["$tier_2_processing_time_ms", 0]}
+                            },
+                            "percentiles": {
+                                "$percentile": {
+                                    "input": "$tier_2_processing_time_ms",
+                                    "p": [0.95, 0.99],
+                                    "method": "approximate",
+                                }
+                            },
+                        }
+                    },
+                ],
+            }
+        },
+    ]
+    result = next(comments_collection.aggregate(pipeline), {})
+    counts = next(iter(result.get("counts", [])), {})
+    tier1_latency = next(iter(result.get("tier1Latency", [])), {})
+    tier2_latency = next(iter(result.get("tier2Latency", [])), {})
+    total = counts.get("total", 0)
+
+    def percentage(count):
+        return round(count / total * 100, 2) if total else 0
+
+    return {
+        "comments": {"collection": comments_collection.name, "total_comments": total},
+        "toxic": {
+            "toxic_comments_count": counts.get("toxic", 0),
+            "total_comments_count": total,
+            "percentage_toxic": percentage(counts.get("toxic", 0)),
+        },
+        "nontoxic": {
+            "non_toxic_comments_count": counts.get("nontoxic", 0),
+            "total_comments_count": total,
+            "percentage_non_toxic": percentage(counts.get("nontoxic", 0)),
+        },
+        "tier1Toxic": {
+            "toxic_comments_count": counts.get("tier1Toxic", 0),
+            "total_comments_count": total,
+            "percentage_toxic": percentage(counts.get("tier1Toxic", 0)),
+        },
+        "tier1Nontoxic": {
+            "non_toxic_comments_count": counts.get("tier1Nontoxic", 0),
+            "total_comments_count": total,
+            "percentage_non_toxic": percentage(counts.get("tier1Nontoxic", 0)),
+        },
+        "tier1": {"tier1_comments_count": counts.get("tier1", 0)},
+        "missed": {
+            "missed_comments_count": counts.get("missed", 0),
+            "total_comments_count": total,
+            "percentage_missed": percentage(counts.get("missed", 0)),
+        },
+        "tier2Toxic": {
+            "toxic_comments_count": counts.get("tier2Toxic", 0),
+            "total_comments_count": total,
+            "percentage_toxic": percentage(counts.get("tier2Toxic", 0)),
+        },
+        "tier2Nontoxic": {
+            "non_toxic_comments_count": counts.get("tier2Nontoxic", 0),
+            "total_comments_count": total,
+            "percentage_non_toxic": percentage(counts.get("tier2Nontoxic", 0)),
+        },
+        "tier2": {"tier2_comments_count": counts.get("tier2", 0)},
+        "tier1Average": {
+            "average_processing_time_ms": tier1_latency.get("average", 0)
+        },
+        "tier2Average": {
+            "average_processing_time_ms": tier2_latency.get("average", 0)
+        },
+        "tier1P95": {
+            "p95_processing_time_ms": next(
+                iter(tier1_latency.get("percentiles", [])), 0
+            )
+        },
+        "tier2P95": {
+            "p95_processing_time_ms": next(
+                iter(tier2_latency.get("percentiles", [])), 0
+            )
+        },
+        "tier1P99": {
+            "p99_processing_time_ms": (
+                tier1_latency.get("percentiles", [0, 0])[1]
+                if len(tier1_latency.get("percentiles", [])) > 1
+                else 0
+            )
+        },
+        "tier2P99": {
+            "p99_processing_time_ms": (
+                tier2_latency.get("percentiles", [0, 0])[1]
+                if len(tier2_latency.get("percentiles", [])) > 1
+                else 0
+            )
+        },
+        "users": {"total_users": user_collection.count_documents({})},
+        "activeEvents": {
+            "live_events_count": live_events_collection.count_documents(
+                {"end_time": {"$exists": False}}
+            )
+        },
+    }
+
+
 @app.get("/comments/tier_1/average_processing_time")
 def get_tier1_average_processing_time(event_id: str = None):
     if event_id is None:
