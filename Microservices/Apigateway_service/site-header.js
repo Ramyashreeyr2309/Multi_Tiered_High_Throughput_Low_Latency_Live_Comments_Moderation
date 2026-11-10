@@ -26,18 +26,22 @@ async function loadSiteHeader() {
   const email = header.querySelector("#site-profile-email");
   const accountMenu = header.querySelector("#site-account-menu");
   const adminDashboardLink = header.querySelector("#site-admin-dashboard");
+  const liveEventsLink = header.querySelector("#site-live-events");
   const logoutButton = header.querySelector("#site-logout-button");
   const accessToken = sessionStorage.getItem("access_token");
   const mailId = sessionStorage.getItem("mail_id");
 
-  if (!profile || !profileTrigger || !name || !email || !accountMenu || !adminDashboardLink || !logoutButton) {
+  if (!profile || !profileTrigger || !name || !email || !accountMenu || !adminDashboardLink || !liveEventsLink || !logoutButton) {
     throw new Error("The shared site header profile controls are missing.");
   }
 
   if (accessToken && mailId) {
     name.textContent = sessionStorage.getItem("user_name") || mailId;
     email.textContent = mailId;
-    adminDashboardLink.hidden = sessionStorage.getItem("role") !== "admin";
+    const isAdmin = sessionStorage.getItem("role") === "admin";
+    const isDashboardPage = window.location.pathname === "/admin/dashboard";
+    adminDashboardLink.hidden = !isAdmin || isDashboardPage;
+    liveEventsLink.hidden = !isAdmin || !isDashboardPage;
     profile.hidden = false;
   }
 
