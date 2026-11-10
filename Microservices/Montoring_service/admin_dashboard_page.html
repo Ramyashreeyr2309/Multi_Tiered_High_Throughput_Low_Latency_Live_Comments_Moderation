@@ -88,7 +88,7 @@
     <section class="heading" id="dashboard-heading" aria-labelledby="dashboard-title" hidden>
       <div>
         <h2 id="dashboard-title">Moderation overview</h2>
-        <p class="subtitle">Comment volume, classification outcomes, and processing latency.</p>
+        <p class="subtitle">Comment volume, classification outcomes, and processing latency. Updates every 10 seconds.</p>
       </div>
       <div class="filters">
         <label for="event-select">Event</label>
@@ -178,6 +178,7 @@
     const numberFormat = new Intl.NumberFormat();
     const apiBase = "/api/v1/monitoring_service";
     let activeRequest = 0;
+    let autoRefreshTimer = null;
 
     function setStatus(message, state = "loading") {
       statusMessage.textContent = message;
@@ -194,13 +195,67 @@
       return Number.isFinite(number) ? `${number.toFixed(2)} ms` : "—";
     }
 
+    function expireSession() {
+      for (const key of ["access_token", "refresh_token", "token_type", "user_name", "mail_id", "role"]) {
+        sessionStorage.removeItem(key);
+      }
+      window.location.replace("/login");
+    }
+
+    async function refreshAccessToken() {
+      const refreshToken = sessionStorage.getItem("refresh_token");
+      if (!refreshToken) {
+        expireSession();
+        return null;
+      }
+
+      const response = await fetch("/api/v1/user_service/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (response.status === 401) {
+        expireSession();
+        return null;
+      }
+      if (!response.ok) {
+        const error = new Error(`/refresh returned ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const result = await response.json();
+      if (typeof result.access_token !== "string" || !result.access_token) {
+        throw new Error("The refresh endpoint returned no access token.");
+      }
+      sessionStorage.setItem("access_token", result.access_token);
+      return result.access_token;
+    }
+
     async function requestJson(path, eventId = "") {
       const url = new URL(`${apiBase}${path}`, window.location.origin);
       if (eventId) url.searchParams.set("event_id", eventId);
-      const accessToken = sessionStorage.getItem("access_token");
-      const response = await fetch(url, {
+      let accessToken = sessionStorage.getItem("access_token");
+      let response = await fetch(url, {
         headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
       });
+      if (response.status === 401) {
+        accessToken = await refreshAccessToken();
+        if (!accessToken) {
+          const error = new Error("Your session has expired. Sign in again.");
+          error.status = 401;
+          throw error;
+        }
+        response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (response.status === 401) {
+          expireSession();
+          const error = new Error("Your session has expired. Sign in again.");
+          error.status = 401;
+          throw error;
+        }
+      }
       if (!response.ok) {
         const error = new Error(`${path} returned ${response.status}`);
         error.status = response.status;
@@ -267,35 +322,11 @@
       refreshButton.disabled = true;
       setStatus("Loading metrics...");
       try {
-        const scopedPaths = {
-          comments: "/comments/count",
-          toxic: "/comments/toxic/count",
-          nontoxic: "/comments/nontoxic/count",
-          tier1Toxic: "/comments/toxic/count/tier_1",
-          tier1Nontoxic: "/comments/nontoxic/count/tier_1",
-          tier1: "/comments/count/tier_1",
-          missed: "/comments/missed_count/tier_1",
-          tier2Toxic: "/comments/toxic/count/tier_2",
-          tier2Nontoxic: "/comments/nontoxic/count/tier_2",
-          tier2: "/comments/count/tier_2",
-          tier1Average: "/comments/tier_1/average_processing_time",
-          tier2Average: "/comments/tier_2/average_processing_time",
-          tier1P95: "/comments/tier_1/p95_processing_time",
-          tier2P95: "/comments/tier_2/p95_processing_time",
-          tier1P99: "/comments/tier_1/p99_processing_time",
-          tier2P99: "/comments/tier_2/p99_processing_time",
-        };
-        const entries = Object.entries(scopedPaths);
-        const results = await Promise.all([
-          ...entries.map(([, path]) => requestJson(path, eventId)),
-          requestJson("/users/count"),
-          requestJson("/live_events/count/active"),
-        ]);
+        const metrics = await requestJson("/dashboard/metrics", eventId);
         if (requestId !== activeRequest) return;
 
-        const metrics = Object.fromEntries(entries.map(([key], index) => [key, results[index]]));
-        const users = results[entries.length];
-        const activeEvents = results[entries.length + 1];
+        const users = metrics.users;
+        const activeEvents = metrics.activeEvents;
         const total = Number(metrics.comments.total_comments) || 0;
         const toxic = Number(metrics.toxic.toxic_comments_count) || 0;
         const nontoxic = Number(metrics.nontoxic.non_toxic_comments_count) || 0;
@@ -332,12 +363,21 @@
           { label: "Tier 2 · non-toxic", value: tier2Nontoxic, color: "blue" },
         ]);
         setStatus(`${formatNumber(users.total_users)} users · Metrics updated ${new Date().toLocaleTimeString()}`, "success");
+        if (autoRefreshTimer === null) {
+          autoRefreshTimer = window.setInterval(() => {
+            if (!document.hidden && !refreshButton.disabled) loadDashboard();
+          }, 10000);
+        }
       } catch (error) {
         if (requestId !== activeRequest) return;
         if (error.status === 403) {
+          window.clearInterval(autoRefreshTimer);
+          autoRefreshTimer = null;
           setDashboardVisible(false);
           setStatus("Admin access required to view moderation metrics.", "error");
         } else if (error.status === 401) {
+          window.clearInterval(autoRefreshTimer);
+          autoRefreshTimer = null;
           setDashboardVisible(false);
           setStatus("Sign in to an admin account to view moderation metrics.", "error");
         } else {
