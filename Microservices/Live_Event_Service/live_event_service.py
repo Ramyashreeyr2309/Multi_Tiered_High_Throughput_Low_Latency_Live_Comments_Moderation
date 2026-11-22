@@ -2,7 +2,7 @@ import asyncio
 import os
 from pathlib import Path as LocalPath
 
-from fastapi import FastAPI, status, Path, Header, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, status, Path, Header, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -258,15 +258,17 @@ def post_comment(
             "event_id":event_id}
 
 @app.get("/live_events/{event_id}/comments")
-def get_comments(page: int = 1, event_id: str=Path(...)):
-    if(page < 1 ):
-        page = 1
+def get_comments(event_id: str = Path(...), cursor: str | None = None):
     limit = 20
-    skip = (page - 1) * limit
+    match_filter = {"event_id": ObjectId(event_id), "Is_Toxic": False}
+    if cursor is not None:
+        if not ObjectId.is_valid(cursor):
+            raise HTTPException(status_code=422, detail="Invalid comment cursor")
+        match_filter["_id"] = {"$lt": ObjectId(cursor)}
+
     recent_comments = list(comments_collection.aggregate([
-        {"$match": {"event_id": ObjectId(event_id), "Is_Toxic": False}},
-        {"$sort": {"timestamp": DESCENDING}},
-        {"$skip": skip},
+        {"$match": match_filter},
+        {"$sort": {"_id": DESCENDING}},
         {"$limit": limit},
         {
             "$lookup": {

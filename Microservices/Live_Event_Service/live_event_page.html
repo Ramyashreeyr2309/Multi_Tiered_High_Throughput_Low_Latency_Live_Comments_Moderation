@@ -106,7 +106,7 @@
     const thumbnailError = document.querySelector("#thumbnail-error");
     const loadMoreButton = document.querySelector("#load-more-button");
     const commentsPerPage = 20;
-    let currentCommentsPage = 1;
+    let commentsCursor = null;
     let hasMoreComments = false;
     let loadingMoreComments = false;
     let redirectingToLogin = false;
@@ -298,7 +298,7 @@
 
     async function loadComments() {
       try {
-        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?page=${currentCommentsPage}`, {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments`, {
           headers: { Authorization: `Bearer ${sessionStorage.getItem("access_token") || ""}` }
         });
         if (response.status === 401) {
@@ -308,6 +308,7 @@
         if (!response.ok) throw new Error("Could not load comments");
         const history = await response.json();
         mergeComments(history);
+        commentsCursor = history.length ? history[history.length - 1]._id : null;
         hasMoreComments = history.length === commentsPerPage;
       } catch {
         emptyState.textContent = "Comment history could not be loaded.";
@@ -321,7 +322,7 @@
       loadMoreButton.disabled = true;
       loadMoreButton.textContent = "Loading more comments...";
       try {
-        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?page=${currentCommentsPage + 1}`, {
+        const response = await fetch(`/api/v1/live_event_service/live_events/${encodeURIComponent(eventId)}/comments?cursor=${encodeURIComponent(commentsCursor)}`, {
           headers: { Authorization: `******"access_token") || ""}` }
         });
         if (response.status === 401) {
@@ -334,7 +335,7 @@
         const previousScrollTop = commentList.scrollTop;
         loadMoreButton.textContent = "Load more comments";
         mergeComments(history);
-        currentCommentsPage += 1;
+        if (history.length) commentsCursor = history[history.length - 1]._id;
         hasMoreComments = history.length === commentsPerPage;
         renderComments({ scrollToBottom: false, previousScrollHeight, previousScrollTop });
       } catch {

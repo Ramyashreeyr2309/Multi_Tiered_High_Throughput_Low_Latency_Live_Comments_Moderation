@@ -13,6 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from Token_Util.token_util import TokenValidationError, decode_access_token
 
+
 app = FastAPI(version="1.0.0")
 security = HTTPBearer(auto_error=False)
 
@@ -162,8 +163,6 @@ async def verify_auth_token(
         return {"user_id": user_id, "mail_id": mail_id, "role": role, "user_name": user_name}
     except TokenValidationError as error:
         raise credentials_exception from error
-
-
 
 # 4. Service Registry Routing Map
 MICROSERVICE_ROUTES = {
