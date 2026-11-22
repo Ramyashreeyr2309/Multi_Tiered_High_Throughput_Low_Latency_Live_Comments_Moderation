@@ -1,0 +1,73 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          environment: local
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/aws-ecs-cadvisor-targets.json
+        refresh_interval: 30s
+    metric_relabel_configs:
+      - source_labels: [container_label_com_docker_compose_service]
+        regex: "(.+)"
+        target_label: service
+      - source_labels: [container_label_com_amazonaws_ecs_container_name]
+        regex: "(.+)"
+        target_label: service
+
+  - job_name: ec2-cadvisor
+    ec2_sd_configs:
+      - region: ap-southeast-2
+        port: 8080
+        filters:
+          - name: instance-state-name
+            values: ["running"]
+    relabel_configs:
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instance_id
+      - source_labels: [__meta_ec2_availability_zone]
+        target_label: availability_zone
+      - source_labels: [__meta_ec2_private_ip]
+        target_label: instance
+      - source_labels: [__meta_ec2_tag_Name]
+        target_label: ec2_name
+      - target_label: environment
+        replacement: production
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          environment: local
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/aws-ecs-node-targets.json
+        refresh_interval: 30s
+
+  - job_name: ec2-node-exporter
+    ec2_sd_configs:
+      - region: ap-southeast-2
+        port: 9100
+        filters:
+          - name: instance-state-name
+            values: ["running"]
+    relabel_configs:
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instance_id
+      - source_labels: [__meta_ec2_availability_zone]
+        target_label: availability_zone
+      - source_labels: [__meta_ec2_private_ip]
+        target_label: instance
+      - source_labels: [__meta_ec2_tag_Name]
+        target_label: ec2_name
+      - target_label: environment
+        replacement: production
