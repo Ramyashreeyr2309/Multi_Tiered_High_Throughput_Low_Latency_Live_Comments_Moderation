@@ -18,8 +18,9 @@ from contextlib import asynccontextmanager
 import asyncio
 from threading import Lock, Thread
 
-LOCAL_MODEL_DIR = "./Tier_1_Service/minilm_onnx_quantized"
-MODEL_PATH = os.path.join("Tier_1_Service", "river_model.pkl")
+SERVICE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_MODEL_DIR = os.path.join(SERVICE_DIR, "minilm_onnx_quantized")
+MODEL_PATH = os.path.join(SERVICE_DIR, "river_model.pkl")
 LEARNING_BATCH_SIZE = 10
 LEARNING_MAX_WAIT_TIME = 2
 MODEL_CACHE_KEY = "tier_1:river_model"
@@ -110,7 +111,7 @@ def get_s3_client():
 
 def deserialize_model(serialized_model):
     model = pickle.loads(serialized_model)
-    #normalize_model_feature_keys(model)
+    normalize_model_feature_keys(model)
     return model
 
 
