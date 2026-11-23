@@ -3,6 +3,7 @@ numpy
 pika
 river[pandas]==0.26.1
 redis
+boto3
 transformers<5
 onnxruntime
 uvicorn[standard]
