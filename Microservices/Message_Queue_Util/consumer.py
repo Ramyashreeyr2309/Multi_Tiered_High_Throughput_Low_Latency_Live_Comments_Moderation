@@ -3,7 +3,9 @@ import os
 import pika
 import json
 import time
+import logging
 
+logger = logging.getLogger(__name__)
 
 def _connection_parameters():
     return pika.URLParameters(
@@ -17,12 +19,12 @@ def _connection_parameters():
 def process_comment(ch, method,  body):
     """Callback function triggered when a new message arrives."""
     comment = json.loads(body.decode('utf-8'))
-    print(f" [-->] Received: ID '{comment['comment_id']}' - Text: '{comment['text']}'")
+    logger.info("Received comment %s", comment['comment_id'])
 
     # Simulate inference work (e.g., MiniLM embedding + River prediction)
     time.sleep(0.5) 
     
-    print(f" [v] Processed comment ID: {comment['comment_id']}")
+    logger.info("Processed comment %s", comment['comment_id'])
 
     # Manual Acknowledgment (signals RabbitMQ to safely remove message from queue)
     ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -39,11 +41,11 @@ def start_consumer(queue_name, process_message):
     # Bind queue to callback handler
     channel.basic_consume(queue=queue_name, on_message_callback=process_message)
 
-    print(f" [*] {queue_name} Worker waiting for message.")
+    logger.info("%s worker waiting for messages", queue_name)
     try:
         channel.start_consuming()
     except KeyboardInterrupt:
-        print("\n [*] Worker stopped.")
+        logger.info("%s worker stopped", queue_name)
         channel.stop_consuming()
         connection.close()
 
@@ -69,7 +71,7 @@ def start_fanout_consumer(exchange_name, process_message):
             on_message_callback=process_message,
         )
 
-        print(f" [*] {exchange_name} fanout subscriber waiting for messages.")
+        logger.info("%s fanout subscriber waiting for messages", exchange_name)
         channel.start_consuming()
     finally:
         if connection.is_open:
@@ -86,7 +88,11 @@ def start_batch_consumer(queue_name, process_message, batch_size, max_wait_time)
     # Prefetch must be at least BATCH_SIZE so RabbitMQ sends 10 messages ahead
     channel.basic_qos(prefetch_count=batch_size)
 
-    print(f"[*] Consumer started. Processing batches of {batch_size} instantly, or flushing partials every {max_wait_time}s.")
+    logger.info(
+        "Consumer started: batches of %d, flushing partial batches every %s seconds",
+        batch_size,
+        max_wait_time,
+    )
 
     # Use a very short inactivity timeout so the generator yields control quickly if empty
     message_generator = channel.consume(queue=queue_name, inactivity_timeout=0.05)
@@ -106,7 +112,7 @@ def start_batch_consumer(queue_name, process_message, batch_size, max_wait_time)
                 batch.append((method_frame.delivery_tag, body))
                 
                 if len(batch) >= batch_size or time_elapsed >= max_wait_time:
-                    print(f"Processing the batch of {len(batch)} now.")
+                    logger.info("Processing a batch of %d comments", len(batch))
                     
                     # --- PROCESS DATA ---
                     process_message(channel, batch)
@@ -115,7 +121,7 @@ def start_batch_consumer(queue_name, process_message, batch_size, max_wait_time)
                     last_flush_time = current_time  # Reset clock
 
     except KeyboardInterrupt:
-        print("\n[*] Stopping worker...")
+        logger.info("Stopping %s worker", queue_name)
         channel.cancel()
 
     connection.close()
@@ -137,9 +143,11 @@ def start_fanout_batch_consumer(exchange_name, process_message, batch_size, max_
     channel.queue_bind(exchange=exchange_name, queue=queue_name)
     channel.basic_qos(prefetch_count=batch_size)
 
-    print(
-        f"[*] {exchange_name} fanout worker processing batches of "
-        f"{batch_size}, flushing every {max_wait_time}s."
+    logger.info(
+        "%s fanout worker processing batches of %d, flushing every %s seconds",
+        exchange_name,
+        batch_size,
+        max_wait_time,
     )
     message_generator = channel.consume(
         queue=queue_name,
@@ -162,7 +170,7 @@ def start_fanout_batch_consumer(exchange_name, process_message, batch_size, max_
                 batch.clear()
                 last_flush_time = current_time
     except KeyboardInterrupt:
-        print("\n[*] Fanout worker stopped.")
+        logger.info("%s fanout worker stopped", exchange_name)
     finally:
         connection.close()
 

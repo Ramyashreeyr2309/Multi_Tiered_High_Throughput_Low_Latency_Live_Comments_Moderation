@@ -193,28 +193,24 @@ def cache_model_if_writer():
 
 def classify_comment(comment_content):
     start:float = time.time() * 1000
-    print('start:',start,' ms')
     test_embeddings = embedder.encode(comment_content)
     test_v = {str(i): float(val) for i, val in enumerate(test_embeddings)}
     with model_lock:
         prob = logistic_regression_model.predict_proba_one(test_v).get(1, 0.0)
     stop:float = time.time() * 1000
-    print('stop:',stop,' ms')
     total:float = stop - start
-    print('Total Time : ',total,' ms')
-    print(prob)
-    print(f"\nLive Test Comment: '{comment_content}'")
-    print(f"Predicted Toxicity Probability: {prob:.2%}")
+    logger.debug(
+        "Classified comment in %.2f ms with toxic probability %.2f%%",
+        total,
+        prob * 100,
+    )
     return prob
 
 def process_comment(ch, method, properties, body):
     """Callback function triggered when a new message arrives."""
     comment = json.loads(body.decode('utf-8'))
-    print(comment)
-    
-    #print(f" [v] Processed comment ID: {comment['comment_id']}")
+    logger.info("Received comment %s", comment.get('comment_id'))
     comment_content=comment['comment_content']
-    print(comment_content)
     prob=classify_comment(comment_content)
     comment['prob']=prob
     send_message(comment,"Tier_1_Out_Queue")
@@ -253,8 +249,6 @@ def process_tier_2_feedback_batch(ch, batch):
 
 @app.get("/tier_1_health_check", include_in_schema=False)
 def tier_1_healthcheck():
-    test_embeddings=embedder.encode("Hello world")
-    print(test_embeddings)
     return "Model is running"
 
 class FastLocalONNXEmbedder:

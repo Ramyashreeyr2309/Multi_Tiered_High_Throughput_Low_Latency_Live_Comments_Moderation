@@ -3,7 +3,9 @@ import os
 import pika
 import json
 import time
+import logging
 
+logger = logging.getLogger(__name__)
 
 def send_message(message_content, queue_name):
     parameters = pika.URLParameters(
@@ -33,7 +35,7 @@ def send_message(message_content, queue_name):
         )
     )
 
-    print(f" Added into message queue {queue_name}")
+    logger.info("Added message to queue %s", queue_name)
     connection.close()
 
 
@@ -62,7 +64,7 @@ def send_fanout_message(message_content, exchange_name):
                 content_type="application/json",
             ),
         )
-        print(f" Added into fanout exchange {exchange_name}")
+        logger.info("Added message to fanout exchange %s", exchange_name)
     finally:
         connection.close()
 

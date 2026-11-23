@@ -17,10 +17,12 @@ from Message_Queue_Util.constants import (
     TIER_2_LABELS_EXCHANGE,
 )
 import json
+import logging
 from threading import Thread
 from pymongo import MongoClient, DESCENDING, ReturnDocument
 from bson.objectid import ObjectId
 
+logger = logging.getLogger(__name__)
 
 # 1. Connect to MongoDB container
 client = MongoClient(
@@ -146,15 +148,14 @@ def process_classified_comment(ch, method, properties, body):
     """Handle a comment received from the Tier 1 output queue."""
     comment = json.loads(body.decode('utf-8'))
     commentTimestamp = datetime.fromisoformat(comment['timestamp']).astimezone(timezone.utc)
-    print(" [<--] Received classified comment:", comment)
+    logger.info("Received classified comment %s", comment.get('comment_id'))
     prob = comment['prob']
     if (prob>=0.6):
-        print("toxic comment")
+        logger.info("Comment %s classified as toxic", comment.get('comment_id'))
         comment['Is_Toxic']=True
     elif 0.35 <= prob < 0.6:
         comment['Is_Toxic']=None
     else:
-        print(comment['comment_content'])
         comment['Is_Toxic']=False
     processingTime = datetime.now(timezone.utc).timestamp() - commentTimestamp.timestamp()
     comment_object = {
@@ -168,7 +169,7 @@ def process_classified_comment(ch, method, properties, body):
         'tier_1_processing_time_ms': int(processingTime * 1000)
     }
     result = comments_collection.insert_one(comment_object)
-    print(f"Inserted document ID: {result.inserted_id}")
+    logger.info("Inserted comment document %s", result.inserted_id)
     ui_comment = comment_for_ui(
         {**comment_object, "_id": result.inserted_id},
         user_name=comment.get("user_name"),
