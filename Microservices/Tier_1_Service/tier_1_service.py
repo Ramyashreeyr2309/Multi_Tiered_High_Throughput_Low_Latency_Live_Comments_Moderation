@@ -110,7 +110,7 @@ def get_s3_client():
 
 def deserialize_model(serialized_model):
     model = pickle.loads(serialized_model)
-    normalize_model_feature_keys(model)
+    #normalize_model_feature_keys(model)
     return model
 
 
