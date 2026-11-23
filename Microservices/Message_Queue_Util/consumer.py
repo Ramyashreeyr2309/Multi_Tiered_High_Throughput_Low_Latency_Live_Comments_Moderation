@@ -48,6 +48,34 @@ def start_consumer(queue_name, process_message):
         connection.close()
 
 
+def start_fanout_consumer(exchange_name, process_message):
+    connection = pika.BlockingConnection(_connection_parameters())
+    try:
+        channel = connection.channel()
+        channel.exchange_declare(
+            exchange=exchange_name,
+            exchange_type="fanout",
+            durable=True,
+        )
+        queue_name = channel.queue_declare(
+            queue="",
+            exclusive=True,
+            auto_delete=True,
+        ).method.queue
+        channel.queue_bind(exchange=exchange_name, queue=queue_name)
+        channel.basic_qos(prefetch_count=1)
+        channel.basic_consume(
+            queue=queue_name,
+            on_message_callback=process_message,
+        )
+
+        print(f" [*] {exchange_name} fanout subscriber waiting for messages.")
+        channel.start_consuming()
+    finally:
+        if connection.is_open:
+            connection.close()
+
+
 
 
 def start_batch_consumer(queue_name, process_message, batch_size, max_wait_time):
