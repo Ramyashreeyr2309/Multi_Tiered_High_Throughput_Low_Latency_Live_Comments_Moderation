@@ -7,8 +7,6 @@ import pickle
 import os
 import time
 import redis
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from Message_Queue_Util.consumer import start_consumer, start_fanout_batch_consumer
 import json
 from Message_Queue_Util.producer import send_message
@@ -26,14 +24,11 @@ LEARNING_MAX_WAIT_TIME = 2
 MODEL_CACHE_KEY = "tier_1:river_model"
 MODEL_WRITER_LOCK_KEY = f"{MODEL_CACHE_KEY}:writer"
 MODEL_WRITER_LEASE_SECONDS = 60
-MODEL_S3_BUCKET = os.getenv("S3_BUCKET")
-MODEL_S3_KEY = os.getenv("TIER_1_MODEL_S3_KEY", "tier_1/river_model.pkl")
 logger = logging.getLogger(__name__)
 redis_client = redis.Redis.from_url(
     os.getenv("REDIS_URL", "redis://host.docker.internal:6379/0"),
     decode_responses=False,
 )
-s3_client = None
 model_writer_lock = None
 model_lock = Lock()
 
@@ -67,67 +62,17 @@ def load_model():
     try:
         cached_model = redis_client.get(MODEL_CACHE_KEY)
     except redis.RedisError as error:
-        logger.warning("Redis model lookup failed; trying S3: %s", error)
+        logger.warning("Redis model lookup failed; using local pickle: %s", error)
         cached_model = None
 
-    if cached_model is not None:
-        try:
-            return deserialize_model(cached_model)
-        except (pickle.PickleError, EOFError, AttributeError, ImportError, IndexError, TypeError, ValueError) as error:
-            logger.warning("Redis model could not be loaded; trying S3: %s", error)
+    if cached_model is None:
+        with open(MODEL_PATH, "rb") as model_file:
+            model = pickle.load(model_file)
+    else:
+        model = pickle.loads(cached_model)
 
-    s3_model_missing = False
-    if MODEL_S3_BUCKET:
-        try:
-            response = get_s3_client().get_object(Bucket=MODEL_S3_BUCKET, Key=MODEL_S3_KEY)
-            return deserialize_model(response["Body"].read())
-        except ClientError as error:
-            error_code = error.response.get("Error", {}).get("Code")
-            if error_code in ("NoSuchKey", "404", "NotFound"):
-                logger.info("Tier 1 model is not present in S3; loading the local pickle")
-                s3_model_missing = True
-            else:
-                logger.warning("S3 model lookup failed; using local pickle: %s", error)
-        except (BotoCoreError, OSError) as error:
-            logger.warning("S3 model lookup failed; using local pickle: %s", error)
-        except (pickle.PickleError, EOFError, AttributeError, ImportError, IndexError, TypeError, ValueError) as error:
-            logger.warning("S3 model could not be loaded; using local pickle: %s", error)
-
-    with open(MODEL_PATH, "rb") as model_file:
-        serialized_model = model_file.read()
-
-    model = deserialize_model(serialized_model)
-    if s3_model_missing:
-        upload_model_to_s3(serialized_model)
-    return model
-
-
-def get_s3_client():
-    global s3_client
-    if s3_client is None:
-        s3_client = boto3.client("s3")
-    return s3_client
-
-
-def deserialize_model(serialized_model):
-    model = pickle.loads(serialized_model)
     normalize_model_feature_keys(model)
     return model
-
-
-def upload_model_to_s3(serialized_model):
-    if not MODEL_S3_BUCKET:
-        return
-
-    try:
-        get_s3_client().put_object(
-            Bucket=MODEL_S3_BUCKET,
-            Key=MODEL_S3_KEY,
-            Body=serialized_model,
-            ContentType="application/octet-stream",
-        )
-    except (BotoCoreError, ClientError, OSError) as error:
-        logger.warning("Could not upload the Tier 1 model to S3: %s", error)
 
 
 def normalize_model_feature_keys(model):
@@ -188,8 +133,6 @@ def cache_model_if_writer():
             logger.error("Redis did not confirm the Tier 1 model cache update")
     except redis.RedisError as error:
         logger.warning("Could not cache the updated Tier 1 model in Redis: %s", error)
-
-    upload_model_to_s3(serialized_model)
 
 
 def classify_comment(comment_content):
