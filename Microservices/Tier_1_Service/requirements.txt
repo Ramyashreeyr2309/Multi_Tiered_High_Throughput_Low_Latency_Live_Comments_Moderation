@@ -1,7 +1,8 @@
 fastapi
 numpy
 pika
-river==0.26.1
+river[pandas]==0.26.1
+redis
 transformers<5
 onnxruntime
 uvicorn[standard]

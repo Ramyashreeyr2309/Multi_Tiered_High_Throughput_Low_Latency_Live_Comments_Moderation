@@ -10,7 +10,9 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from Message_Queue_Util.producer import send_message
+from Message_Queue_Util.producer import send_fanout_message
 from Message_Queue_Util.consumer import start_consumer
+from Message_Queue_Util.constants import TIER_2_LABELS_EXCHANGE
 import json
 from threading import Thread
 from pymongo import MongoClient, DESCENDING, ReturnDocument
@@ -160,9 +162,12 @@ def process_classified_comment(ch, method, properties, body):
 def process_tier_2_classified_comment(ch, method, properties, body):
     """Handle a comment received from the Tier 2 output queue."""
     comments = json.loads(body.decode('utf-8'))
+    feedback_comments = []
     for comment in comments:
         comment_id = comment['comment_id']
         is_toxic = comment['Is_Toxic']
+        if not isinstance(is_toxic, bool):
+            raise ValueError(f"Invalid Tier 2 toxicity label for comment {comment_id}")
         updated_comment = comments_collection.find_one_and_update(
             {'_id': ObjectId(comment_id)},
             [{'$set': {
@@ -174,6 +179,14 @@ def process_tier_2_classified_comment(ch, method, properties, body):
 
         if updated_comment is None:
             raise LookupError(f"Comment {comment_id} was not found for Tier 2 update")
+
+        feedback_comments.append(
+            {
+                "comment_id": comment_id,
+                "comment_content": updated_comment["comment_content"],
+                "Is_Toxic": is_toxic,
+            }
+        )
 
         event_id = updated_comment.get("event_id")
         if updated_comment['Is_Toxic'] and event_id and server_loop and not server_loop.is_closed():
@@ -201,6 +214,9 @@ def process_tier_2_classified_comment(ch, method, properties, body):
                 ),
                 server_loop,
             )
+
+    if feedback_comments:
+        send_fanout_message(feedback_comments, TIER_2_LABELS_EXCHANGE)
 
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

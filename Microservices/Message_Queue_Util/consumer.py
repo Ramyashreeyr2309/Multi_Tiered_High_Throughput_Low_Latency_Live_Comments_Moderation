@@ -92,6 +92,52 @@ def start_batch_consumer(queue_name, process_message, batch_size, max_wait_time)
 
     connection.close()
 
+
+def start_fanout_batch_consumer(exchange_name, process_message, batch_size, max_wait_time):
+    connection = pika.BlockingConnection(_connection_parameters())
+    channel = connection.channel()
+    channel.exchange_declare(
+        exchange=exchange_name,
+        exchange_type="fanout",
+        durable=True,
+    )
+    queue_name = channel.queue_declare(
+        queue="",
+        exclusive=True,
+        auto_delete=True,
+    ).method.queue
+    channel.queue_bind(exchange=exchange_name, queue=queue_name)
+    channel.basic_qos(prefetch_count=batch_size)
+
+    print(
+        f"[*] {exchange_name} fanout worker processing batches of "
+        f"{batch_size}, flushing every {max_wait_time}s."
+    )
+    message_generator = channel.consume(
+        queue=queue_name,
+        inactivity_timeout=0.1,
+    )
+
+    try:
+        batch = []
+        last_flush_time = time.monotonic()
+        for method_frame, _properties, body in message_generator:
+            current_time = time.monotonic()
+            if method_frame is not None:
+                batch.append((method_frame.delivery_tag, body))
+
+            if batch and (
+                len(batch) >= batch_size
+                or current_time - last_flush_time >= max_wait_time
+            ):
+                process_message(channel, batch)
+                batch.clear()
+                last_flush_time = current_time
+    except KeyboardInterrupt:
+        print("\n[*] Fanout worker stopped.")
+    finally:
+        connection.close()
+
     
 if __name__ == '__main__':
     start_consumer()

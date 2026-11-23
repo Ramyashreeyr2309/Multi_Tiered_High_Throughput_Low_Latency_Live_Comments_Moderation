@@ -1,42 +1,146 @@
 import numpy as np
+import pandas as pd
+import logging
 from transformers import AutoTokenizer
 import onnxruntime as ort
 import pickle
 import os
 import time
-from Message_Queue_Util.consumer import start_consumer
+import redis
+from Message_Queue_Util.consumer import start_consumer, start_fanout_batch_consumer
 import json
 from Message_Queue_Util.producer import send_message
+from Message_Queue_Util.constants import TIER_2_LABELS_EXCHANGE
 from fastapi import FastAPI, status, Path, Header
 from contextlib import asynccontextmanager
 import asyncio
-from threading import Thread
+from threading import Lock, Thread
 
 LOCAL_MODEL_DIR = "./Tier_1_Service/minilm_onnx_quantized"
+MODEL_PATH = os.path.join("Tier_1_Service", "river_model.pkl")
+LEARNING_BATCH_SIZE = 10
+LEARNING_MAX_WAIT_TIME = 2
+MODEL_CACHE_KEY = "tier_1:river_model"
+MODEL_WRITER_LOCK_KEY = f"{MODEL_CACHE_KEY}:writer"
+MODEL_WRITER_LEASE_SECONDS = 60
+logger = logging.getLogger(__name__)
+redis_client = redis.Redis.from_url(
+    os.getenv("REDIS_URL", "redis://host.docker.internal:6379/0"),
+    decode_responses=False,
+)
+model_writer_lock = None
+model_lock = Lock()
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global logistic_regression_model,embedder,server_loop
     embedder = FastLocalONNXEmbedder(LOCAL_MODEL_DIR, "model_quantized.onnx")
 
-    with open("Tier_1_Service/river_model.pkl", "rb") as f:
-        logistic_regression_model = pickle.load(f)
+    logistic_regression_model = load_model()
     server_loop = asyncio.get_running_loop()
     Thread(
         target=start_consumer,
         args=("Tier_1_In_Queue", process_comment),
         daemon=True,
     ).start()
+    Thread(
+        target=start_fanout_batch_consumer,
+        args=(
+            TIER_2_LABELS_EXCHANGE,
+            process_tier_2_feedback_batch,
+            LEARNING_BATCH_SIZE,
+            LEARNING_MAX_WAIT_TIME,
+        ),
+        daemon=True,
+    ).start()
     yield
 
 app = FastAPI(lifespan=lifespan)
+
+def load_model():
+    try:
+        cached_model = redis_client.get(MODEL_CACHE_KEY)
+    except redis.RedisError as error:
+        logger.warning("Redis model lookup failed; using local pickle: %s", error)
+        cached_model = None
+
+    if cached_model is None:
+        with open(MODEL_PATH, "rb") as model_file:
+            model = pickle.load(model_file)
+    else:
+        model = pickle.loads(cached_model)
+
+    normalize_model_feature_keys(model)
+    return model
+
+
+def normalize_model_feature_keys(model):
+    try:
+        scaler = model.steps["StandardScaler"]
+        classifier = model.steps["LogisticRegression"]
+        feature_maps = (
+            scaler.counts,
+            scaler.means,
+            scaler.vars,
+            classifier._weights,
+        )
+    except (AttributeError, KeyError) as error:
+        raise TypeError("Tier 1 model must be a StandardScaler/LogisticRegression pipeline") from error
+
+    for feature_map in feature_maps:
+        for feature_key in list(feature_map.keys()):
+            if type(feature_key) is int:
+                feature_map[str(feature_key)] = feature_map.pop(feature_key)
+
+
+def is_model_writer():
+    global model_writer_lock
+    if model_writer_lock is not None:
+        try:
+            if model_writer_lock.owned():
+                model_writer_lock.extend(MODEL_WRITER_LEASE_SECONDS, replace_ttl=True)
+                return True
+        except redis.RedisError as error:
+            logger.warning("Could not renew Redis model-writer lease: %s", error)
+        model_writer_lock = None
+
+    try:
+        candidate_lock = redis_client.lock(
+            MODEL_WRITER_LOCK_KEY,
+            timeout=MODEL_WRITER_LEASE_SECONDS,
+            blocking=False,
+            thread_local=False,
+        )
+        if candidate_lock.acquire(blocking=False):
+            model_writer_lock = candidate_lock
+            return True
+    except redis.RedisError as error:
+        logger.warning("Could not acquire Redis model-writer lease: %s", error)
+
+    return False
+
+
+def cache_model_if_writer():
+    if not is_model_writer():
+        return
+
+    with model_lock:
+        serialized_model = pickle.dumps(logistic_regression_model)
+
+    try:
+        if not redis_client.set(MODEL_CACHE_KEY, serialized_model):
+            logger.error("Redis did not confirm the Tier 1 model cache update")
+    except redis.RedisError as error:
+        logger.warning("Could not cache the updated Tier 1 model in Redis: %s", error)
+
 
 def classify_comment(comment_content):
     start:float = time.time() * 1000
     print('start:',start,' ms')
     test_embeddings = embedder.encode(comment_content)
-    test_v = {i: val for i, val in enumerate(test_embeddings)}
-    prob = logistic_regression_model.predict_proba_one(test_v).get(1, 0.0)
+    test_v = {str(i): float(val) for i, val in enumerate(test_embeddings)}
+    with model_lock:
+        prob = logistic_regression_model.predict_proba_one(test_v).get(1, 0.0)
     stop:float = time.time() * 1000
     print('stop:',stop,' ms')
     total:float = stop - start
@@ -60,6 +164,34 @@ def process_comment(ch, method, properties, body):
      # Manual Acknowledgment (signals RabbitMQ to safely remove message from queue)
     ch.basic_ack(delivery_tag=method.delivery_tag)
     
+
+def process_tier_2_feedback_batch(ch, batch):
+    comments = []
+    for _delivery_tag, body in batch:
+        feedback = json.loads(body.decode("utf-8"))
+        if not isinstance(feedback, list):
+            raise ValueError("Tier 2 fanout feedback must be a list of labeled comments")
+        comments.extend(feedback)
+
+    comment_texts = [comment["comment_content"] for comment in comments]
+    labels = [comment["Is_Toxic"] for comment in comments]
+
+    if any(not isinstance(text, str) for text in comment_texts):
+        raise ValueError("Tier 2 feedback comments must contain comment_content text")
+    if any(not isinstance(label, bool) for label in labels):
+        raise ValueError("Tier 2 feedback labels must be boolean")
+
+    embeddings = [embedder.encode(text) for text in comment_texts]
+    feature_columns = [str(i) for i in range(len(embeddings[0]))]
+    features = pd.DataFrame(embeddings, columns=feature_columns)
+    targets = pd.Series(labels, dtype=bool)
+
+    with model_lock:
+        logistic_regression_model.learn_many(features, targets)
+    cache_model_if_writer()
+
+    for delivery_tag, _ in batch:
+        ch.basic_ack(delivery_tag=delivery_tag)
 
 
 @app.get("/tier_1_health_check", include_in_schema=False)
