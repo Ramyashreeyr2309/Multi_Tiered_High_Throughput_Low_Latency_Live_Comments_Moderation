@@ -30,7 +30,7 @@
     .chat-panel.is-unavailable > :not(#chat-unavailable) { opacity: .4; pointer-events: none; }
     #chat-unavailable { position: absolute; z-index: 1; inset: 0; display: grid; place-content: center; gap: 12px; padding: 24px; color: #555d63; background: #e8eaecdd; text-align: center; }
     #chat-unavailable p { margin: 0; }
-    #retry-chat-button { justify-self: center; padding: 8px 14px; color: #fff; background: #606970; border: 0; border-radius: 4px; cursor: pointer; }
+    #retry-chat-button { justify-self: center; padding: 8px 14px; color: #263238; background: #efd89a; border: 1px solid #d9c27a; border-radius: 4px; cursor: pointer; }
     #retry-chat-button:disabled { opacity: .65; cursor: wait; }
     .chat-header { padding: 16px 18px 12px; border-bottom: 1px solid #e8eaec; }
     .chat-header h2 { margin: 0 0 5px; font-size: 17px; }
@@ -46,9 +46,9 @@
     #form-note { min-height: 16px; margin: 0 0 7px; color: #687078; font-size: 11px; }
     #comment-form label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; }
     #comment { display: block; width: 100%; min-height: 74px; padding: 10px; resize: vertical; border: 1px solid #cbd0d4; border-radius: 5px; outline: none; }
-    #comment:focus { border-color: #2876d2; box-shadow: 0 0 0 2px #2876d222; }
-    #send-button { display: block; min-width: 84px; margin: 9px 0 0 auto; padding: 9px 16px; color: #fff; background: #1769c2; border: 0; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; }
-    #send-button:hover { background: #0e58a7; }
+    #comment:focus { border-color: #d9c27a; box-shadow: 0 0 0 2px #efd89a55; }
+    #send-button { display: block; min-width: 84px; margin: 9px 0 0 auto; padding: 9px 16px; color: #263238; background: #efd89a; border: 1px solid #d9c27a; border-radius: 4px; font-size: 13px; font-weight: 700; cursor: pointer; }
+    #send-button:hover { background: #e3c982; }
     #send-button:disabled { opacity: .65; cursor: wait; }
     @media (max-width: 850px) {
       .watch-page { width: min(100% - 32px, 720px); padding-top: 22px; }
