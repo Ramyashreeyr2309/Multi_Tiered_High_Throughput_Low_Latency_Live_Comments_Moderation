@@ -3,7 +3,9 @@ import os
 import pika
 import json
 import time
+import logging
 
+logger = logging.getLogger(__name__)
 
 def send_message(message_content, queue_name):
     parameters = pika.URLParameters(
@@ -33,8 +35,39 @@ def send_message(message_content, queue_name):
         )
     )
 
-    print(f" Added into message queue {queue_name}")
+    logger.info("Added message to queue %s", queue_name)
     connection.close()
+
+
+def send_fanout_message(message_content, exchange_name):
+    parameters = pika.URLParameters(
+        os.getenv(
+            "RABBITMQ_URL",
+            "amqp://admin:secretpass@host.docker.internal:5672/%2F",
+        )
+    )
+    connection = pika.BlockingConnection(parameters)
+    try:
+        channel = connection.channel()
+        channel.exchange_declare(
+            exchange=exchange_name,
+            exchange_type="fanout",
+            durable=True,
+        )
+        channel.confirm_delivery()
+        channel.basic_publish(
+            exchange=exchange_name,
+            routing_key="",
+            body=json.dumps(message_content),
+            properties=pika.BasicProperties(
+                delivery_mode=pika.DeliveryMode.Persistent,
+                content_type="application/json",
+            ),
+        )
+        logger.info("Added message to fanout exchange %s", exchange_name)
+    finally:
+        connection.close()
+
 
 if __name__ == '__main__':
     # Test Payload

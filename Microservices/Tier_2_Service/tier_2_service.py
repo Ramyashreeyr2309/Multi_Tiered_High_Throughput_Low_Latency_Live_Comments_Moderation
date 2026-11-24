@@ -67,9 +67,8 @@ def process_batch_comments(ch, batch):
         '''
     )
 
-    print(response.output_text)
-
     output_json=json.loads(response.output_text)
+    logger.info("Tier 2 moderation returned results for %d comments", len(output_json))
     message = []
     for ele in output_json:
         comment_id=ele['id']

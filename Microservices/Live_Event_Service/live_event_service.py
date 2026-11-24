@@ -10,12 +10,19 @@ from pydantic import BaseModel, EmailStr
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from Message_Queue_Util.producer import send_message
-from Message_Queue_Util.consumer import start_consumer
+from Message_Queue_Util.producer import send_fanout_message
+from Message_Queue_Util.consumer import start_consumer, start_fanout_consumer
+from Message_Queue_Util.constants import (
+    LIVE_EVENT_NOTIFICATIONS_EXCHANGE,
+    TIER_2_LABELS_EXCHANGE,
+)
 import json
+import logging
 from threading import Thread
 from pymongo import MongoClient, DESCENDING, ReturnDocument
 from bson.objectid import ObjectId
 
+logger = logging.getLogger(__name__)
 
 # 1. Connect to MongoDB container
 client = MongoClient(
@@ -96,19 +103,59 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 server_loop = None
 
+
+def publish_live_event_notification(
+    delivery: str,
+    event_id: str,
+    payload: dict,
+    user_id: str | None = None,
+):
+    notification = {
+        "delivery": delivery,
+        "event_id": str(event_id),
+        "payload": payload,
+    }
+    if user_id is not None:
+        notification["user_id"] = str(user_id)
+    send_fanout_message(notification, LIVE_EVENT_NOTIFICATIONS_EXCHANGE)
+
+
+def process_live_event_notification(ch, method, _properties, body):
+    """Deliver a fanout notification to sockets connected to this instance."""
+    notification = json.loads(body.decode("utf-8"))
+    delivery = notification["delivery"]
+    event_id = notification["event_id"]
+    payload = notification["payload"]
+
+    if delivery not in ("broadcast", "send_to_user"):
+        raise ValueError(f"Unsupported live event delivery type: {delivery}")
+
+    if server_loop and not server_loop.is_closed():
+        if delivery == "broadcast":
+            coroutine = connection_manager.broadcast(event_id, payload)
+        else:
+            coroutine = connection_manager.send_to_user(
+                event_id,
+                notification["user_id"],
+                payload,
+            )
+        asyncio.run_coroutine_threadsafe(coroutine, server_loop)
+
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+
 def process_classified_comment(ch, method, properties, body):
     """Handle a comment received from the Tier 1 output queue."""
     comment = json.loads(body.decode('utf-8'))
     commentTimestamp = datetime.fromisoformat(comment['timestamp']).astimezone(timezone.utc)
-    print(" [<--] Received classified comment:", comment)
+    logger.info("Received classified comment %s", comment.get('comment_id'))
     prob = comment['prob']
     if (prob>=0.6):
-        print("toxic comment")
+        logger.info("Comment %s classified as toxic", comment.get('comment_id'))
         comment['Is_Toxic']=True
     elif 0.35 <= prob < 0.6:
         comment['Is_Toxic']=None
     else:
-        print(comment['comment_content'])
         comment['Is_Toxic']=False
     processingTime = datetime.now(timezone.utc).timestamp() - commentTimestamp.timestamp()
     comment_object = {
@@ -122,7 +169,7 @@ def process_classified_comment(ch, method, properties, body):
         'tier_1_processing_time_ms': int(processingTime * 1000)
     }
     result = comments_collection.insert_one(comment_object)
-    print(f"Inserted document ID: {result.inserted_id}")
+    logger.info("Inserted comment document %s", result.inserted_id)
     ui_comment = comment_for_ui(
         {**comment_object, "_id": result.inserted_id},
         user_name=comment.get("user_name"),
@@ -137,22 +184,18 @@ def process_classified_comment(ch, method, properties, body):
         send_message(message,"Tier_2_In_Queue")
 
     event_id = comment.get("event_id")
-    if comment['Is_Toxic'] is None and event_id and server_loop and not server_loop.is_closed():
-        asyncio.run_coroutine_threadsafe(
-            connection_manager.send_to_user(
-                str(event_id),
-                str(comment['user_id']),
-                jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
-            ),
-            server_loop,
+    if comment['Is_Toxic'] is None and event_id:
+        publish_live_event_notification(
+            "send_to_user",
+            event_id,
+            jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
+            user_id=comment["user_id"],
         )
-    elif comment['Is_Toxic'] is False and event_id and server_loop and not server_loop.is_closed():
-        asyncio.run_coroutine_threadsafe(
-            connection_manager.broadcast(
-                str(event_id),
-                jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
-            ),
-            server_loop,
+    elif comment['Is_Toxic'] is False and event_id:
+        publish_live_event_notification(
+            "broadcast",
+            event_id,
+            jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
         )
         
     ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -160,9 +203,12 @@ def process_classified_comment(ch, method, properties, body):
 def process_tier_2_classified_comment(ch, method, properties, body):
     """Handle a comment received from the Tier 2 output queue."""
     comments = json.loads(body.decode('utf-8'))
+    feedback_comments = []
     for comment in comments:
         comment_id = comment['comment_id']
         is_toxic = comment['Is_Toxic']
+        if not isinstance(is_toxic, bool):
+            raise ValueError(f"Invalid Tier 2 toxicity label for comment {comment_id}")
         updated_comment = comments_collection.find_one_and_update(
             {'_id': ObjectId(comment_id)},
             [{'$set': {
@@ -175,32 +221,39 @@ def process_tier_2_classified_comment(ch, method, properties, body):
         if updated_comment is None:
             raise LookupError(f"Comment {comment_id} was not found for Tier 2 update")
 
+        feedback_comments.append(
+            {
+                "comment_id": comment_id,
+                "comment_content": updated_comment["comment_content"],
+                "Is_Toxic": is_toxic,
+            }
+        )
+
         event_id = updated_comment.get("event_id")
-        if updated_comment['Is_Toxic'] and event_id and server_loop and not server_loop.is_closed():
+        if updated_comment['Is_Toxic'] and event_id:
             removal = {
                 "type": "remove_comment",
                 "comment_id": str(updated_comment["_id"]),
             }
-            asyncio.run_coroutine_threadsafe(
-                connection_manager.send_to_user(
-                    str(event_id),
-                    str(updated_comment["user_id"]),
-                    removal,
-                ),
-                server_loop,
+            publish_live_event_notification(
+                "send_to_user",
+                event_id,
+                removal,
+                user_id=updated_comment["user_id"],
             )
-        elif not updated_comment['Is_Toxic'] and event_id and server_loop and not server_loop.is_closed():
+        elif not updated_comment['Is_Toxic'] and event_id:
             ui_comment = comment_for_ui(
                 updated_comment,
                 user_name=comment.get("user_name"),
             )
-            asyncio.run_coroutine_threadsafe(
-                connection_manager.broadcast(
-                    str(event_id),
-                    jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
-                ),
-                server_loop,
+            publish_live_event_notification(
+                "broadcast",
+                event_id,
+                jsonable_encoder(ui_comment, custom_encoder={ObjectId: str}),
             )
+
+    if feedback_comments:
+        send_fanout_message(feedback_comments, TIER_2_LABELS_EXCHANGE)
 
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -220,6 +273,14 @@ async def lifespan(_app: FastAPI):
             args=("Tier_2_Out_Queue", process_tier_2_classified_comment),
             daemon=True,
         ).start()
+    Thread(
+        target=start_fanout_consumer,
+        args=(
+            LIVE_EVENT_NOTIFICATIONS_EXCHANGE,
+            process_live_event_notification,
+        ),
+        daemon=True,
+    ).start()
     yield
 
 
